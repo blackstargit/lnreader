@@ -1,5 +1,12 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Pressable, View, StyleSheet, Text, ScrollView } from 'react-native';
+import {
+  Platform,
+  Pressable,
+  View,
+  StyleSheet,
+  Text,
+  ScrollView,
+} from 'react-native';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { Dialog, List, Slider } from '@components';
 import { getLocales } from 'expo-localization';
@@ -405,6 +412,54 @@ const TTSTab: React.FC = () => {
                   }
                 />
               </View>
+
+              {Platform.OS === 'android' ? (
+                <>
+                  <View style={styles.sliderSection}>
+                    <Text
+                      style={[styles.sliderLabel, { color: theme.onSurface }]}
+                    >
+                      Sentence pause: {tts?.sentencePause ?? 200} ms
+                    </Text>
+                    <Slider
+                      value={tts?.sentencePause ?? 200}
+                      min={0}
+                      max={1500}
+                      step={50}
+                      showValueIndicator
+                      formatValue={value => `${Math.round(value)} ms`}
+                      accessibilityLabel="Pause after each sentence"
+                      onSlidingComplete={value =>
+                        setChapterReaderSettings({
+                          tts: { ...tts, sentencePause: Math.round(value) },
+                        })
+                      }
+                    />
+                  </View>
+
+                  <View style={styles.sliderSection}>
+                    <Text
+                      style={[styles.sliderLabel, { color: theme.onSurface }]}
+                    >
+                      Paragraph pause: {tts?.paragraphPause ?? 400} ms
+                    </Text>
+                    <Slider
+                      value={tts?.paragraphPause ?? 400}
+                      min={0}
+                      max={3000}
+                      step={50}
+                      showValueIndicator
+                      formatValue={value => `${Math.round(value)} ms`}
+                      accessibilityLabel="Pause after each paragraph"
+                      onSlidingComplete={value =>
+                        setChapterReaderSettings({
+                          tts: { ...tts, paragraphPause: Math.round(value) },
+                        })
+                      }
+                    />
+                  </View>
+                </>
+              ) : null}
 
               <ReaderSheetPreferenceItem
                 description={getString(

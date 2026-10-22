@@ -220,6 +220,9 @@ export interface ChapterReaderSettings {
     voice?: TtsVoice;
     rate?: number;
     pitch?: number;
+    /** Android only: silence after each sentence / paragraph, in milliseconds. */
+    sentencePause?: number;
+    paragraphPause?: number;
     autoPageAdvance?: boolean;
     scrollToTop?: boolean;
   };
@@ -339,6 +342,8 @@ export const initialChapterReaderSettings: ChapterReaderSettings = {
   tts: {
     rate: 1,
     pitch: 1,
+    sentencePause: 200,
+    paragraphPause: 400,
     autoPageAdvance: false,
     scrollToTop: true,
   },
@@ -440,6 +445,8 @@ export const useChapterReaderSettings = () => {
         scrollToTop: storedSettings.tts?.scrollToTop ?? true,
         rate: storedSettings.tts?.rate ?? 1,
         pitch: storedSettings.tts?.pitch ?? 1,
+        sentencePause: storedSettings.tts?.sentencePause ?? 200,
+        paragraphPause: storedSettings.tts?.paragraphPause ?? 400,
       },
     }),
     [storedSettings],

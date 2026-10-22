@@ -15,4 +15,8 @@ export interface TtsSettings {
   rate: number;
   /** Voice-pitch multiplier selected by the reader. */
   pitch: number;
+  /** Android only: silence after each sentence, in milliseconds. Ignored on iOS. */
+  sentencePauseMs: number;
+  /** Android only: silence after each paragraph, in milliseconds. Ignored on iOS. */
+  paragraphPauseMs: number;
 }

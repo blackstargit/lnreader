@@ -31,6 +31,8 @@ describe('useTtsSession', () => {
         {
           rate: 1.2,
           pitch: 0.9,
+          sentencePauseMs: 200,
+          paragraphPauseMs: 400,
         },
       );
     });
@@ -48,6 +50,8 @@ describe('useTtsSession', () => {
       {
         rate: 1.2,
         pitch: 0.9,
+        sentencePauseMs: 200,
+        paragraphPauseMs: 400,
       },
     );
     expect(session.play).toHaveBeenCalledTimes(1);

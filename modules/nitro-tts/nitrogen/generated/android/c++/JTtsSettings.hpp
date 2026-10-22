@@ -40,11 +40,17 @@ namespace margelo::nitro::nitrotts {
       double rate = this->getFieldValue(fieldRate);
       static const auto fieldPitch = clazz->getField<double>("pitch");
       double pitch = this->getFieldValue(fieldPitch);
+      static const auto fieldSentencePauseMs = clazz->getField<double>("sentencePauseMs");
+      double sentencePauseMs = this->getFieldValue(fieldSentencePauseMs);
+      static const auto fieldParagraphPauseMs = clazz->getField<double>("paragraphPauseMs");
+      double paragraphPauseMs = this->getFieldValue(fieldParagraphPauseMs);
       return TtsSettings(
         engineName != nullptr ? std::make_optional(engineName->toStdString()) : std::nullopt,
         voiceIdentifier != nullptr ? std::make_optional(voiceIdentifier->toStdString()) : std::nullopt,
         rate,
-        pitch
+        pitch,
+        sentencePauseMs,
+        paragraphPauseMs
       );
     }
 
@@ -54,7 +60,7 @@ namespace margelo::nitro::nitrotts {
      */
     [[maybe_unused]]
     static jni::local_ref<JTtsSettings::javaobject> fromCpp(const TtsSettings& value) {
-      using JSignature = JTtsSettings(jni::alias_ref<jni::JString>, jni::alias_ref<jni::JString>, double, double);
+      using JSignature = JTtsSettings(jni::alias_ref<jni::JString>, jni::alias_ref<jni::JString>, double, double, double, double);
       static const auto clazz = javaClassStatic();
       static const auto create = clazz->getStaticMethod<JSignature>("fromCpp");
       return create(
@@ -62,7 +68,9 @@ namespace margelo::nitro::nitrotts {
         value.engineName.has_value() ? jni::make_jstring(value.engineName.value()) : nullptr,
         value.voiceIdentifier.has_value() ? jni::make_jstring(value.voiceIdentifier.value()) : nullptr,
         value.rate,
-        value.pitch
+        value.pitch,
+        value.sentencePauseMs,
+        value.paragraphPauseMs
       );
     }
   };

@@ -33,12 +33,11 @@ internal object TtsPlaybackStore {
     private const val LOOKAHEAD = 12
 
     /**
-     * Silence before each sentence and after each sentence/paragraph, replacing the engine's own
-     * padding. Tuning knobs: raise the pauses if text runs together, lower them for tighter reading.
+     * Silence kept before each sentence, replacing the engine's own padding. The pauses after
+     * sentences and paragraphs come from [TtsSettings] (reader TTS settings).
      */
     private const val SENTENCE_LEAD_MS = 30
-    private const val SENTENCE_PAUSE_MS = 200
-    private const val PARAGRAPH_PAUSE_MS = 400
+    private const val MAX_PAUSE_MS = 5000
 
     private data class Chunk(val paragraph: Int, val text: String)
 
@@ -70,7 +69,7 @@ internal object TtsPlaybackStore {
     /** Paused with player and synthesized chunks kept, so [play] resumes instantly. */
     private var pausedInPlace = false
     private var metadata: TtsMetadata? = null
-    private var settings = TtsSettings(null, null, 1.0, 1.0)
+    private var settings = TtsSettings(null, null, 1.0, 1.0, 200.0, 400.0)
     private var state = TtsPlaybackState.IDLE
     private var generation = 0L
 
@@ -406,8 +405,14 @@ internal object TtsPlaybackStore {
         requireReady()
         // The reader sends this on any reader-setting change; don't restart for no-ops.
         if (nextSettings == settings) return
+        val pausesOnly = nextSettings.copy(
+            sentencePauseMs = settings.sentencePauseMs,
+            paragraphPauseMs = settings.paragraphPauseMs,
+        ) == settings
         val shouldResume = state == TtsPlaybackState.PLAYING
         settings = nextSettings
+        // Pauses apply to chunks as they finish synthesizing; no need to restart for them.
+        if (pausesOnly) return
         if (shouldResume) {
             speakFrom(playChunk)
         } else if (pausedInPlace) {
@@ -504,7 +509,8 @@ internal object TtsPlaybackStore {
     private fun onChunkSynthesized(utteranceId: String) {
         val index = chunkIndexOf(utteranceId) ?: return
         val endsParagraph = chunks.getOrNull(index + 1)?.paragraph != chunks[index].paragraph
-        setPauses(chunkFile(index), if (endsParagraph) PARAGRAPH_PAUSE_MS else SENTENCE_PAUSE_MS)
+        val pauseMs = if (endsParagraph) settings.paragraphPauseMs else settings.sentencePauseMs
+        setPauses(chunkFile(index), pauseMs.toInt().coerceIn(0, MAX_PAUSE_MS))
         synthesized += index
         if (player == null && index == playChunk && state == TtsPlaybackState.PLAYING) {
             startPlayer()

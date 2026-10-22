@@ -87,6 +87,8 @@ const toNativeTtsSettings = (
   voiceIdentifier: settings?.voice?.identifier,
   rate: settings?.rate ?? 1,
   pitch: settings?.pitch ?? 1,
+  sentencePauseMs: settings?.sentencePause ?? 200,
+  paragraphPauseMs: settings?.paragraphPause ?? 400,
 });
 
 /**

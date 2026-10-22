@@ -44,10 +44,12 @@ namespace margelo::nitro::nitrotts {
     std::optional<std::string> voiceIdentifier     SWIFT_PRIVATE;
     double rate     SWIFT_PRIVATE;
     double pitch     SWIFT_PRIVATE;
+    double sentencePauseMs     SWIFT_PRIVATE;
+    double paragraphPauseMs     SWIFT_PRIVATE;
 
   public:
     TtsSettings() = default;
-    explicit TtsSettings(std::optional<std::string> engineName, std::optional<std::string> voiceIdentifier, double rate, double pitch): engineName(engineName), voiceIdentifier(voiceIdentifier), rate(rate), pitch(pitch) {}
+    explicit TtsSettings(std::optional<std::string> engineName, std::optional<std::string> voiceIdentifier, double rate, double pitch, double sentencePauseMs, double paragraphPauseMs): engineName(engineName), voiceIdentifier(voiceIdentifier), rate(rate), pitch(pitch), sentencePauseMs(sentencePauseMs), paragraphPauseMs(paragraphPauseMs) {}
 
   public:
     friend bool operator==(const TtsSettings& lhs, const TtsSettings& rhs) = default;
@@ -66,7 +68,9 @@ namespace margelo::nitro {
         JSIConverter<std::optional<std::string>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "engineName"))),
         JSIConverter<std::optional<std::string>>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "voiceIdentifier"))),
         JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "rate"))),
-        JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "pitch")))
+        JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "pitch"))),
+        JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "sentencePauseMs"))),
+        JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "paragraphPauseMs")))
       );
     }
     static inline jsi::Value toJSI(jsi::Runtime& runtime, const margelo::nitro::nitrotts::TtsSettings& arg) {
@@ -75,6 +79,8 @@ namespace margelo::nitro {
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "voiceIdentifier"), JSIConverter<std::optional<std::string>>::toJSI(runtime, arg.voiceIdentifier));
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "rate"), JSIConverter<double>::toJSI(runtime, arg.rate));
       obj.setProperty(runtime, PropNameIDCache::get(runtime, "pitch"), JSIConverter<double>::toJSI(runtime, arg.pitch));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "sentencePauseMs"), JSIConverter<double>::toJSI(runtime, arg.sentencePauseMs));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "paragraphPauseMs"), JSIConverter<double>::toJSI(runtime, arg.paragraphPauseMs));
       return obj;
     }
     static inline bool canConvert(jsi::Runtime& runtime, const jsi::Value& value) {
@@ -89,6 +95,8 @@ namespace margelo::nitro {
       if (!JSIConverter<std::optional<std::string>>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "voiceIdentifier")))) return false;
       if (!JSIConverter<double>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "rate")))) return false;
       if (!JSIConverter<double>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "pitch")))) return false;
+      if (!JSIConverter<double>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "sentencePauseMs")))) return false;
+      if (!JSIConverter<double>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "paragraphPauseMs")))) return false;
       return true;
     }
   };

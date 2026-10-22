@@ -18,7 +18,7 @@ public extension TtsSettings {
   /**
    * Create a new instance of `TtsSettings`.
    */
-  init(engineName: String?, voiceIdentifier: String?, rate: Double, pitch: Double) {
+  init(engineName: String?, voiceIdentifier: String?, rate: Double, pitch: Double, sentencePauseMs: Double, paragraphPauseMs: Double) {
     self.init({ () -> bridge.std__optional_std__string_ in
       if let __unwrappedValue = engineName {
         return bridge.create_std__optional_std__string_(std.string(__unwrappedValue))
@@ -31,7 +31,7 @@ public extension TtsSettings {
       } else {
         return .init()
       }
-    }(), rate, pitch)
+    }(), rate, pitch, sentencePauseMs, paragraphPauseMs)
   }
 
   @inline(__always)
@@ -66,5 +66,15 @@ public extension TtsSettings {
   @inline(__always)
   var pitch: Double {
     return self.__pitch
+  }
+  
+  @inline(__always)
+  var sentencePauseMs: Double {
+    return self.__sentencePauseMs
+  }
+  
+  @inline(__always)
+  var paragraphPauseMs: Double {
+    return self.__paragraphPauseMs
   }
 }
