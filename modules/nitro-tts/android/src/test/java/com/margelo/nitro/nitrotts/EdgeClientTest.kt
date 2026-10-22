@@ -43,7 +43,11 @@ class EdgeClientTest {
             "en-US-AndrewMultilingualNeural",
             1.0,
             1.0,
-            onDone = { bytes = it.size; done.countDown() },
+            onDone = {
+                bytes = it.size
+                System.getenv("EDGE_LIVE_OUT")?.let { path -> java.io.File(path).writeBytes(it) }
+                done.countDown()
+            },
             onError = { error = it; done.countDown() },
         )
         assertTrue("timed out", done.await(30, TimeUnit.SECONDS))
