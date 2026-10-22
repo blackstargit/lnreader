@@ -6,15 +6,47 @@ import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.MediaPlayer
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import java.io.File
+import java.io.IOException
 import java.util.Locale
 
+/**
+ * Plays a chapter by synthesizing sentence chunks to files ahead of playback and playing them
+ * with chained [MediaPlayer]s. Speaking through [TextToSpeech.speak] instead would leave the
+ * engine only ~500ms of buffered audio (MAX_UNCONSUMED_AUDIO_MS in the framework's playback
+ * queue), so any engine slower than that per sentence produces an audible gap after every sentence.
+ */
 internal object TtsPlaybackStore {
+    /**
+     * Sentence chunks synthesized ahead of the one currently playing. Large because on-device
+     * engines run close to real time (Kokoro on a Pixel: ~0.8–1.1 s of work per second of
+     * audio); the buffer built up during fast stretches absorbs slow ones (short sentences,
+     * thermal throttling) instead of draining after a few paragraphs. ~300 KB per chunk.
+     */
+    private const val LOOKAHEAD = 12
+
+    /**
+     * Silence before each sentence and after each sentence/paragraph, replacing the engine's own
+     * padding. Tuning knobs: raise the pauses if text runs together, lower them for tighter reading.
+     */
+    private const val SENTENCE_LEAD_MS = 30
+    private const val SENTENCE_PAUSE_MS = 200
+    private const val PARAGRAPH_PAUSE_MS = 400
+
+    private data class Chunk(val paragraph: Int, val text: String)
+
+    private val speechAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build()
+
     private val ownerHandler = Handler(Looper.getMainLooper())
     private val stateListeners = TtsListenerRegistry<TtsPlaybackState>()
     private val progressListeners = TtsListenerRegistry<TtsProgress>()
@@ -28,6 +60,15 @@ internal object TtsPlaybackStore {
     private var isReady = false
     private var paragraphs: List<TtsParagraph> = emptyList()
     private var currentIndex = 0
+    private var chunks: List<Chunk> = emptyList()
+    private var playChunk = 0
+    private var nextToSynthesize = 0
+    private val synthesized = mutableSetOf<Int>()
+    private var player: MediaPlayer? = null
+    /** Prepared player for `playChunk + 1`, handed to [player] via setNextMediaPlayer. */
+    private var nextPlayer: MediaPlayer? = null
+    /** Paused with player and synthesized chunks kept, so [play] resumes instantly. */
+    private var pausedInPlace = false
     private var metadata: TtsMetadata? = null
     private var settings = TtsSettings(null, null, 1.0, 1.0)
     private var state = TtsPlaybackState.IDLE
@@ -155,11 +196,19 @@ internal object TtsPlaybackStore {
         requireReady()
         require(nextParagraphs.isNotEmpty()) { "The TTS queue cannot be empty." }
 
-        generation += 1
-        engine?.stop()
+        halt()
         paragraphs = nextParagraphs.filter { it.text.isNotBlank() }
         require(paragraphs.isNotEmpty()) { "The TTS queue contains no readable paragraphs." }
+        chunks = paragraphs.flatMapIndexed { index, paragraph ->
+            splitSentences(paragraph.text).ifEmpty { listOf(paragraph.text) }
+                .map(::prepareForSpeech)
+                .filter { it.isNotEmpty() }
+                .let(::mergeShortSentences)
+                .map { Chunk(index, it) }
+        }
+        require(chunks.isNotEmpty()) { "The TTS queue contains no readable paragraphs." }
         currentIndex = initialIndex.coerceIn(paragraphs.indices)
+        playChunk = firstChunkOf(currentIndex)
         metadata = nextMetadata
         settings = nextSettings
         state = TtsPlaybackState.PAUSED
@@ -173,7 +222,16 @@ internal object TtsPlaybackStore {
     fun play() {
         requireReady()
         check(paragraphs.isNotEmpty()) { "Load a paragraph queue before starting TTS." }
-        speakCurrent()
+        if (pausedInPlace) {
+            resumeInPlace()
+            return
+        }
+        // Resume at the paused sentence unless the user has moved to another paragraph since.
+        if (chunks.getOrNull(playChunk)?.paragraph == currentIndex) {
+            speakFrom(playChunk)
+        } else {
+            speakCurrent()
+        }
     }
 
     /**
@@ -189,9 +247,10 @@ internal object TtsPlaybackStore {
     }
 
     fun stop() {
-        generation += 1
-        engine?.stop()
+        halt()
+        clearAudioCache()
         paragraphs = emptyList()
+        chunks = emptyList()
         currentIndex = 0
         metadata = null
         state = TtsPlaybackState.IDLE
@@ -201,15 +260,49 @@ internal object TtsPlaybackStore {
         applicationContext?.let { TtsPlaybackService.stop(it) }
     }
 
-    /** Stops the engine and marks playback paused, without touching audio focus. */
+    /**
+     * Pauses playback without touching audio focus. Keeps the player and synthesized chunks:
+     * the engine can't be interrupted mid-sentence, so re-synthesizing on resume would also wait
+     * for whatever it is still generating (several seconds with slow engines).
+     */
     private fun pauseEngine() {
         if (state != TtsPlaybackState.PLAYING) {
             return
         }
-        generation += 1
-        engine?.stop()
+        player?.pause()
+        pausedInPlace = true
         state = TtsPlaybackState.PAUSED
         emitState()
+    }
+
+    private fun resumeInPlace() {
+        if (!requestAudioFocus()) {
+            fail("Couldn't get audio focus - another app or call may be using audio.")
+            return
+        }
+        pausedInPlace = false
+        state = TtsPlaybackState.PLAYING
+        resumeOnFocusGain = false
+        emitState()
+        val current = player
+        if (current != null) {
+            current.start()
+        } else if (playChunk in synthesized) {
+            startPlayer()
+        }
+        // Otherwise onChunkSynthesized starts it when the engine finishes.
+    }
+
+    /** Invalidates in-flight callbacks, cancels pending synthesis and releases the players. */
+    private fun halt() {
+        generation += 1
+        engine?.stop()
+        player?.release()
+        player = null
+        nextPlayer?.release()
+        nextPlayer = null
+        synthesized.clear()
+        pausedInPlace = false
     }
 
     /**
@@ -222,12 +315,8 @@ internal object TtsPlaybackStore {
         val manager = audioManager ?: return false
 
         val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val attributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                .build()
             val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(attributes)
+                .setAudioAttributes(speechAttributes)
                 .setOnAudioFocusChangeListener(audioFocusChangeListener, ownerHandler)
                 .build()
             audioFocusRequest = request
@@ -315,10 +404,15 @@ internal object TtsPlaybackStore {
 
     fun updateSettings(nextSettings: TtsSettings) {
         requireReady()
+        // The reader sends this on any reader-setting change; don't restart for no-ops.
+        if (nextSettings == settings) return
         val shouldResume = state == TtsPlaybackState.PLAYING
         settings = nextSettings
         if (shouldResume) {
-            speakCurrent()
+            speakFrom(playChunk)
+        } else if (pausedInPlace) {
+            // Chunks were synthesized with the old voice/rate; play() re-synthesizes.
+            halt()
         }
     }
 
@@ -345,11 +439,19 @@ internal object TtsPlaybackStore {
         return TtsPlaybackSnapshot(state, metadata, currentProgress())
     }
 
-    private fun speakCurrent() {
+    private fun speakCurrent() = speakFrom(firstChunkOf(currentIndex))
+
+    /** First chunk of [paragraph], or of the next paragraph if it had nothing speakable. */
+    private fun firstChunkOf(paragraph: Int): Int {
+        val index = chunks.indexOfFirst { it.paragraph >= paragraph }
+        return if (index < 0) chunks.lastIndex else index
+    }
+
+    private fun speakFrom(chunkIndex: Int) {
         if (engine == null || settings.engineName != boundEngineName) {
             pendingInitialization.add { result ->
                 result.fold(
-                    onSuccess = { speakCurrent() },
+                    onSuccess = { speakFrom(chunkIndex) },
                     onFailure = { fail("The selected text-to-speech engine failed to initialize.") },
                 )
             }
@@ -362,30 +464,169 @@ internal object TtsPlaybackStore {
             return
         }
 
+        halt()
+        clearAudioCache()
         val activeEngine = checkNotNull(engine)
-        val paragraph = paragraphs[currentIndex]
-        generation += 1
-        val utteranceId = utteranceId(generation, currentIndex)
-
         activeEngine.setSpeechRate(settings.rate.toFloat().coerceIn(0.1f, 4.0f))
         activeEngine.setPitch(settings.pitch.toFloat().coerceIn(0.1f, 2.0f))
         applyVoice(activeEngine)
 
-        val result = activeEngine.speak(
-            paragraph.text,
-            TextToSpeech.QUEUE_FLUSH,
-            Bundle(),
-            utteranceId,
-        )
-        if (result == TextToSpeech.ERROR) {
-            fail("The text-to-speech engine rejected the current paragraph.")
-            return
-        }
-
+        playChunk = chunkIndex.coerceIn(chunks.indices)
+        nextToSynthesize = playChunk
+        currentIndex = chunks[playChunk].paragraph
         state = TtsPlaybackState.PLAYING
         resumeOnFocusGain = false
         emitProgress()
         emitState()
+        synthesizeAhead()
+    }
+
+    /** Keeps up to [LOOKAHEAD] chunks after the playing one queued for synthesis. */
+    private fun synthesizeAhead() {
+        val activeEngine = engine ?: return
+        val last = (playChunk + LOOKAHEAD).coerceAtMost(chunks.lastIndex)
+        while (nextToSynthesize <= last) {
+            val index = nextToSynthesize
+            val result = activeEngine.synthesizeToFile(
+                chunks[index].text,
+                Bundle(),
+                chunkFile(index),
+                utteranceId(generation, index),
+            )
+            if (result == TextToSpeech.ERROR) {
+                fail("The text-to-speech engine rejected the current paragraph.")
+                return
+            }
+            nextToSynthesize += 1
+        }
+    }
+
+    private fun onChunkSynthesized(utteranceId: String) {
+        val index = chunkIndexOf(utteranceId) ?: return
+        val endsParagraph = chunks.getOrNull(index + 1)?.paragraph != chunks[index].paragraph
+        setPauses(chunkFile(index), if (endsParagraph) PARAGRAPH_PAUSE_MS else SENTENCE_PAUSE_MS)
+        synthesized += index
+        if (player == null && index == playChunk && state == TtsPlaybackState.PLAYING) {
+            startPlayer()
+        } else if (index == playChunk + 1) {
+            chainNext()
+        }
+    }
+
+    private fun setPauses(file: File, pauseMs: Int) {
+        try {
+            val wav = file.readBytes()
+            val trimmed = trimWavSilence(wav, SENTENCE_LEAD_MS, pauseMs)
+            if (trimmed !== wav) file.writeBytes(trimmed)
+        } catch (cause: IOException) {
+            // Untrimmed audio still plays with the engine's own pauses.
+        }
+    }
+
+    private fun startPlayer() {
+        markParagraphPlaying()
+        val file = chunkFile(playChunk)
+        val current = preparePlayer(playChunk)
+        if (current == null) {
+            // Unplayable (e.g. empty) audio: skip the chunk.
+            onChunkFinished(file)
+            return
+        }
+        player = current
+        current.start()
+        chainNext()
+    }
+
+    private fun preparePlayer(index: Int): MediaPlayer? {
+        val file = chunkFile(index)
+        val queueGeneration = generation
+        val prepared = MediaPlayer()
+        return try {
+            prepared.setAudioAttributes(speechAttributes)
+            prepared.setDataSource(file.path)
+            prepared.prepare()
+            prepared.setOnCompletionListener {
+                if (queueGeneration == generation) onChunkFinished(file)
+            }
+            prepared
+        } catch (cause: Exception) {
+            prepared.release()
+            null
+        }
+    }
+
+    /** Hands the next chunk's player to the current one, so Android starts it with no gap. */
+    private fun chainNext() {
+        val current = player ?: return
+        val index = playChunk + 1
+        if (nextPlayer != null || index !in synthesized) return
+        val prepared = preparePlayer(index) ?: return
+        current.setNextMediaPlayer(prepared)
+        nextPlayer = prepared
+    }
+
+    private fun onChunkFinished(file: File) {
+        player?.release()
+        player = null
+        file.delete()
+        if (playChunk >= chunks.lastIndex) {
+            completeQueue()
+            return
+        }
+        playChunk += 1
+        synthesizeAhead()
+        val chained = nextPlayer
+        nextPlayer = null
+        if (chained != null) {
+            // Already started by setNextMediaPlayer.
+            player = chained
+            if (state != TtsPlaybackState.PLAYING) chained.pause()
+            markParagraphPlaying()
+            chainNext()
+        } else if (playChunk in synthesized) {
+            startPlayer()
+        }
+        // Otherwise onChunkSynthesized starts it when the engine finishes.
+    }
+
+    private fun markParagraphPlaying() {
+        val paragraph = chunks[playChunk].paragraph
+        if (paragraph != currentIndex) {
+            currentIndex = paragraph
+            emitProgress()
+        }
+    }
+
+    private val cjkToLatin: ((String) -> String)? by lazy {
+        // android.icu.text.Transliterator is API 29+.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@lazy null
+        val anyToLatin = android.icu.text.Transliterator.getInstance("Any-Latin")
+        val latinToAscii = android.icu.text.Transliterator.getInstance("Latin-ASCII")
+        val transliterate: (String) -> String = {
+            latinToAscii.transliterate(anyToLatin.transliterate(it))
+        }
+        transliterate
+    }
+
+    private fun prepareForSpeech(text: String): String {
+        val romanized = cjkToLatin?.let { romanizeCjk(text, it) } ?: text
+        return speakableText(romanized)
+    }
+
+    private fun chunkIndexOf(utteranceId: String): Int? {
+        val prefix = "lnreader-$generation-"
+        if (!utteranceId.startsWith(prefix)) return null
+        return utteranceId.removePrefix(prefix).toIntOrNull()
+    }
+
+    private fun audioCacheDir(): File {
+        return File(checkNotNull(applicationContext).cacheDir, "tts").apply { mkdirs() }
+    }
+
+    private fun chunkFile(index: Int): File = File(audioCacheDir(), "$generation-$index.wav")
+
+    private fun clearAudioCache() {
+        applicationContext?.let { audioCacheDir().listFiles()?.forEach(File::delete) }
     }
 
     private fun applyVoice(activeEngine: TextToSpeech) {
@@ -403,25 +644,15 @@ internal object TtsPlaybackStore {
         }
     }
 
-    private fun advance(utteranceId: String) {
-        if (utteranceId != utteranceId(generation, currentIndex)) {
-            return
-        }
-        if (currentIndex >= paragraphs.lastIndex) {
-            completeQueue()
-            return
-        }
-        currentIndex += 1
-        speakCurrent()
-    }
-
     private fun completeQueue() {
+        halt()
         state = TtsPlaybackState.COMPLETED
         emitState()
         applicationContext?.let { TtsPlaybackService.stop(it) }
     }
 
     private fun fail(message: String) {
+        halt()
         state = TtsPlaybackState.ERROR
         errorListeners.emit(message)
         emitState()
@@ -470,34 +701,28 @@ internal object TtsPlaybackStore {
     }
 
     private val progressListener = object : UtteranceProgressListener() {
-        override fun onStart(utteranceId: String) {
-            runOnOwner {
-                if (utteranceId == utteranceId(generation, currentIndex)) {
-                    state = TtsPlaybackState.PLAYING
-                    emitState()
-                }
-            }
-        }
+        // Synthesis-to-file start; playback state is driven by the player instead.
+        override fun onStart(utteranceId: String) = Unit
 
         override fun onDone(utteranceId: String) {
-            runOnOwner { advance(utteranceId) }
+            runOnOwner { onChunkSynthesized(utteranceId) }
         }
 
         @Deprecated("Deprecated by Android")
         override fun onError(utteranceId: String) {
-            runOnOwner {
-                if (utteranceId == utteranceId(generation, currentIndex)) {
-                    fail("The text-to-speech engine failed while speaking.")
-                }
-            }
+            runOnOwner { handleError(utteranceId, "The text-to-speech engine failed while speaking.") }
         }
 
         override fun onError(utteranceId: String, errorCode: Int) {
             runOnOwner {
-                if (utteranceId == utteranceId(generation, currentIndex)) {
-                    fail("The text-to-speech engine failed with error code $errorCode.")
-                }
+                handleError(utteranceId, "The text-to-speech engine failed with error code $errorCode.")
             }
+        }
+    }
+
+    private fun handleError(utteranceId: String, message: String) {
+        if (chunkIndexOf(utteranceId) != null) {
+            fail(message)
         }
     }
 }
