@@ -32,6 +32,19 @@ internal object TtsPlaybackStore {
      */
     private const val LOOKAHEAD = 12
 
+    /** Engine id for Microsoft Edge's online voices, listed alongside the installed engines. */
+    const val EDGE_ENGINE = "lnreader.edge"
+    private const val EDGE_LABEL = "Microsoft Edge voices (online)"
+    private const val DEFAULT_EDGE_VOICE = "en-US-AndrewMultilingualNeural"
+
+    /**
+     * Edge renders ~10x faster than real time with 8 requests in flight (measured), so it can
+     * stay far ahead; each request is retried on failure or stall (~1 in 40 stall for 8 s).
+     */
+    private const val EDGE_LOOKAHEAD = 40
+    private const val EDGE_PARALLEL = 8
+    private const val EDGE_ATTEMPTS = 6
+
     /**
      * Silence kept before each sentence, replacing the engine's own padding. The pauses after
      * sentences and paragraphs come from [TtsSettings] (reader TTS settings).
@@ -64,6 +77,10 @@ internal object TtsPlaybackStore {
     private var nextToSynthesize = 0
     private val synthesized = mutableSetOf<Int>()
     private var player: MediaPlayer? = null
+    private val edge by lazy { EdgeClient() }
+    private val edgeCalls = mutableListOf<EdgeClient.Call>()
+    /** Synthesis requests issued for this generation and not yet finished. */
+    private var inFlight = 0
     /** Prepared player for `playChunk + 1`, handed to [player] via setNextMediaPlayer. */
     private var nextPlayer: MediaPlayer? = null
     /** Paused with player and synthesized chunks kept, so [play] resumes instantly. */
@@ -111,6 +128,7 @@ internal object TtsPlaybackStore {
                 )
             }
             .distinctBy { it.name }
+            .plus(TtsEngine(name = EDGE_ENGINE, label = EDGE_LABEL))
             .sortedBy { it.label.lowercase() }
     }
 
@@ -120,6 +138,17 @@ internal object TtsPlaybackStore {
         engineName: String?,
         completion: (Result<List<TtsVoice>>) -> Unit,
     ) {
+        if (engineName == EDGE_ENGINE) {
+            Thread {
+                val result = runCatching {
+                    edge.listVoices().map { voice ->
+                        TtsVoice(identifier = voice.shortName, name = voice.shortName, language = voice.locale)
+                    }.sortedBy { it.name }
+                }
+                runOnOwner { completion(result) }
+            }.start()
+            return
+        }
         runOnOwner {
             var probe: TextToSpeech? = null
             val listener = TextToSpeech.OnInitListener { status ->
@@ -161,6 +190,12 @@ internal object TtsPlaybackStore {
         engine?.stop()
         engine?.shutdown()
         engine = null
+        if (engineName == EDGE_ENGINE) {
+            isReady = true
+            boundEngineName = engineName
+            completeInitialization(Result.success(Unit))
+            return
+        }
 
         val listener = TextToSpeech.OnInitListener { status ->
             runOnOwner {
@@ -296,6 +331,9 @@ internal object TtsPlaybackStore {
     private fun halt() {
         generation += 1
         engine?.stop()
+        edgeCalls.forEach { it.cancel() }
+        edgeCalls.clear()
+        inFlight = 0
         player?.release()
         player = null
         nextPlayer?.release()
@@ -453,7 +491,7 @@ internal object TtsPlaybackStore {
     }
 
     private fun speakFrom(chunkIndex: Int) {
-        if (engine == null || settings.engineName != boundEngineName) {
+        if (settings.engineName != boundEngineName || (!usingEdge() && engine == null)) {
             pendingInitialization.add { result ->
                 result.fold(
                     onSuccess = { speakFrom(chunkIndex) },
@@ -471,10 +509,12 @@ internal object TtsPlaybackStore {
 
         halt()
         clearAudioCache()
-        val activeEngine = checkNotNull(engine)
-        activeEngine.setSpeechRate(settings.rate.toFloat().coerceIn(0.1f, 4.0f))
-        activeEngine.setPitch(settings.pitch.toFloat().coerceIn(0.1f, 2.0f))
-        applyVoice(activeEngine)
+        if (!usingEdge()) {
+            val activeEngine = checkNotNull(engine)
+            activeEngine.setSpeechRate(settings.rate.toFloat().coerceIn(0.1f, 4.0f))
+            activeEngine.setPitch(settings.pitch.toFloat().coerceIn(0.1f, 2.0f))
+            applyVoice(activeEngine)
+        }
 
         playChunk = chunkIndex.coerceIn(chunks.indices)
         nextToSynthesize = playChunk
@@ -486,28 +526,92 @@ internal object TtsPlaybackStore {
         synthesizeAhead()
     }
 
-    /** Keeps up to [LOOKAHEAD] chunks after the playing one queued for synthesis. */
+    private fun usingEdge() = boundEngineName == EDGE_ENGINE
+
+    /**
+     * Keeps chunks after the playing one requested, in playback order: up to [LOOKAHEAD] queued in
+     * a system engine (it renders one at a time), or [EDGE_LOOKAHEAD] ahead with
+     * [EDGE_PARALLEL] Edge requests in flight. Completions call back in to top up.
+     */
     private fun synthesizeAhead() {
-        val activeEngine = engine ?: return
-        val last = (playChunk + LOOKAHEAD).coerceAtMost(chunks.lastIndex)
-        while (nextToSynthesize <= last) {
+        val edgeMode = usingEdge()
+        val activeEngine = engine
+        if (!edgeMode && activeEngine == null) return
+        val last = (playChunk + if (edgeMode) EDGE_LOOKAHEAD else LOOKAHEAD).coerceAtMost(chunks.lastIndex)
+        while (nextToSynthesize <= last && (!edgeMode || inFlight < EDGE_PARALLEL)) {
             val index = nextToSynthesize
-            val result = activeEngine.synthesizeToFile(
-                chunks[index].text,
-                Bundle(),
-                chunkFile(index),
-                utteranceId(generation, index),
-            )
-            if (result == TextToSpeech.ERROR) {
-                fail("The text-to-speech engine rejected the current paragraph.")
-                return
+            if (edgeMode) {
+                requestEdge(index, attempt = 0)
+            } else {
+                val result = checkNotNull(activeEngine).synthesizeToFile(
+                    chunks[index].text,
+                    Bundle(),
+                    chunkFile(index),
+                    utteranceId(generation, index),
+                )
+                if (result == TextToSpeech.ERROR) {
+                    fail("The text-to-speech engine rejected the current paragraph.")
+                    return
+                }
             }
+            inFlight += 1
             nextToSynthesize += 1
         }
     }
 
+    /** Fetches chunk [index] from Edge as MP3, decodes it to WAV, and reports it like an engine would. */
+    private fun requestEdge(index: Int, attempt: Int) {
+        val queueGeneration = generation
+        val wav = chunkFile(index)
+        val mp3 = File(wav.path.removeSuffix(".wav") + ".mp3")
+        val voice = settings.voiceIdentifier?.takeIf { it.endsWith("Neural") } ?: DEFAULT_EDGE_VOICE
+        var call: EdgeClient.Call? = null
+        call = edge.synthesize(
+            chunks[index].text,
+            voice,
+            settings.rate,
+            settings.pitch,
+            onDone = { bytes ->
+                // Runs on an OkHttp thread, so decoding stays off the main thread.
+                val decoded = runCatching {
+                    mp3.writeBytes(bytes)
+                    decodeMp3ToWav(mp3, wav)
+                }
+                mp3.delete()
+                runOnOwner {
+                    edgeCalls.remove(call)
+                    if (queueGeneration != generation) return@runOnOwner
+                    decoded.fold(
+                        onSuccess = { onChunkSynthesized(utteranceId(queueGeneration, index)) },
+                        onFailure = { retryEdge(index, attempt, "couldn't decode audio") },
+                    )
+                }
+            },
+            onError = { message ->
+                runOnOwner {
+                    edgeCalls.remove(call)
+                    if (queueGeneration == generation) retryEdge(index, attempt, message)
+                }
+            },
+        )
+        edgeCalls += call
+    }
+
+    /** Retries with 1, 2, 4, 8, 16 s backoff; the chunk keeps its in-flight slot meanwhile. */
+    private fun retryEdge(index: Int, attempt: Int, message: String) {
+        if (attempt + 1 >= EDGE_ATTEMPTS) {
+            fail("Microsoft Edge voices are unreachable ($message). Check your connection and press play.")
+            return
+        }
+        val queueGeneration = generation
+        ownerHandler.postDelayed({
+            if (queueGeneration == generation) requestEdge(index, attempt + 1)
+        }, 1000L shl attempt)
+    }
+
     private fun onChunkSynthesized(utteranceId: String) {
         val index = chunkIndexOf(utteranceId) ?: return
+        inFlight = (inFlight - 1).coerceAtLeast(0)
         val endsParagraph = chunks.getOrNull(index + 1)?.paragraph != chunks[index].paragraph
         val pauseMs = if (endsParagraph) settings.paragraphPauseMs else settings.sentencePauseMs
         setPauses(chunkFile(index), pauseMs.toInt().coerceIn(0, MAX_PAUSE_MS))
@@ -517,6 +621,8 @@ internal object TtsPlaybackStore {
         } else if (index == playChunk + 1) {
             chainNext()
         }
+        // Edge results arrive out of order and each frees a slot; refill it.
+        if (usingEdge()) synthesizeAhead()
     }
 
     private fun setPauses(file: File, pauseMs: Int) {

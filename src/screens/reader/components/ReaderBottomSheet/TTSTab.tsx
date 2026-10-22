@@ -317,9 +317,12 @@ const TTSTab: React.FC = () => {
   // Voices belong to a specific engine, so refetch whenever it changes.
   const engineName = tts?.engine?.name;
   useEffect(() => {
-    Tts.getVoices(engineName).then(res => {
-      setVoices([...res].sort((a, b) => a.name.localeCompare(b.name)));
-    });
+    Tts.getVoices(engineName)
+      .then(res => {
+        setVoices([...res].sort((a, b) => a.name.localeCompare(b.name)));
+      })
+      // Online engines (Microsoft Edge) can't list voices while offline.
+      .catch(() => setVoices([]));
   }, [engineName]);
 
   const handleEngineSelect = useCallback(
