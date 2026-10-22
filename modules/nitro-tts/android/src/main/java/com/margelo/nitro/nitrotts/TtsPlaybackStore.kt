@@ -85,6 +85,8 @@ internal object TtsPlaybackStore {
     private var nextPlayer: MediaPlayer? = null
     /** Paused with player and synthesized chunks kept, so [play] resumes instantly. */
     private var pausedInPlace = false
+    /** Set while recovering from a dead engine binding, so a real rejection still fails. */
+    private var rebinding = false
     private var metadata: TtsMetadata? = null
     private var settings = TtsSettings(null, null, 1.0, 1.0, 200.0, 400.0)
     private var state = TtsPlaybackState.IDLE
@@ -331,8 +333,10 @@ internal object TtsPlaybackStore {
     private fun halt() {
         generation += 1
         engine?.stop()
-        edgeCalls.forEach { it.cancel() }
+        // cancel() calls back synchronously and removes itself from edgeCalls: iterate a copy.
+        val calls = edgeCalls.toList()
         edgeCalls.clear()
+        calls.forEach { it.cancel() }
         inFlight = 0
         player?.release()
         player = null
@@ -550,6 +554,20 @@ internal object TtsPlaybackStore {
                     utteranceId(generation, index),
                 )
                 if (result == TextToSpeech.ERROR) {
+                    // Usually a dead binding: the engine app was updated or killed, and
+                    // TextToSpeech never reconnects by itself. Rebind once and resume here.
+                    if (!rebinding) {
+                        rebinding = true
+                        val resumeAt = playChunk
+                        pendingInitialization.add { initResult ->
+                            initResult.fold(
+                                onSuccess = { speakFrom(resumeAt) },
+                                onFailure = { fail("The selected text-to-speech engine failed to initialize.") },
+                            )
+                        }
+                        bindEngine(settings.engineName)
+                        return
+                    }
                     fail("The text-to-speech engine rejected the current paragraph.")
                     return
                 }
@@ -611,6 +629,7 @@ internal object TtsPlaybackStore {
 
     private fun onChunkSynthesized(utteranceId: String) {
         val index = chunkIndexOf(utteranceId) ?: return
+        rebinding = false
         inFlight = (inFlight - 1).coerceAtLeast(0)
         val endsParagraph = chunks.getOrNull(index + 1)?.paragraph != chunks[index].paragraph
         val pauseMs = if (endsParagraph) settings.paragraphPauseMs else settings.sentencePauseMs
@@ -765,6 +784,7 @@ internal object TtsPlaybackStore {
 
     private fun fail(message: String) {
         halt()
+        rebinding = false
         state = TtsPlaybackState.ERROR
         errorListeners.emit(message)
         emitState()
