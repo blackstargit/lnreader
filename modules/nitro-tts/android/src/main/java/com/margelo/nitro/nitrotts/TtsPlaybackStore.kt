@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.util.Log
 import java.io.File
 import java.io.IOException
 import java.util.Locale
@@ -51,6 +52,8 @@ internal object TtsPlaybackStore {
      */
     private const val SENTENCE_LEAD_MS = 30
     private const val MAX_PAUSE_MS = 5000
+    private const val IDLE_RELEASE_MS = 30_000L
+    private const val TAG = "nitrotts"
 
     private data class Chunk(val paragraph: Int, val text: String)
 
@@ -96,6 +99,14 @@ internal object TtsPlaybackStore {
     private var audioFocusRequest: AudioFocusRequest? = null
     private var hasAudioFocus = false
     private var resumeOnFocusGain = false
+
+    /** Releases focus and the service if no new chapter was loaded after [completeQueue]. */
+    private val idleRelease = Runnable {
+        if (state == TtsPlaybackState.COMPLETED) {
+            abandonAudioFocus()
+            applicationContext?.let { TtsPlaybackService.stop(it) }
+        }
+    }
 
     fun prepare(context: Context, completion: (Result<Unit>) -> Unit) {
         runOnOwner {
@@ -231,6 +242,9 @@ internal object TtsPlaybackStore {
     ) {
         requireReady()
         require(nextParagraphs.isNotEmpty()) { "The TTS queue cannot be empty." }
+        ownerHandler.removeCallbacks(idleRelease)
+        // Start first so a failure rejects the promise without leaving a half-loaded queue.
+        TtsPlaybackService.start(checkNotNull(applicationContext))
 
         halt()
         paragraphs = nextParagraphs.filter { it.text.isNotBlank() }
@@ -248,16 +262,15 @@ internal object TtsPlaybackStore {
         metadata = nextMetadata
         settings = nextSettings
         state = TtsPlaybackState.PAUSED
+        Log.i(TAG, "load: ${paragraphs.size} paragraphs, initialIndex=$currentIndex, engine=${settings.engineName}")
         emitProgress()
         emitState()
-
-        val context = checkNotNull(applicationContext)
-        TtsPlaybackService.start(context)
     }
 
     fun play() {
         requireReady()
         check(paragraphs.isNotEmpty()) { "Load a paragraph queue before starting TTS." }
+        Log.i(TAG, "play: index=$currentIndex, pausedInPlace=$pausedInPlace")
         if (pausedInPlace) {
             resumeInPlace()
             return
@@ -283,6 +296,8 @@ internal object TtsPlaybackStore {
     }
 
     fun stop() {
+        Log.i(TAG, "stop: state=$state")
+        ownerHandler.removeCallbacks(idleRelease)
         halt()
         clearAudioCache()
         paragraphs = emptyList()
@@ -495,6 +510,7 @@ internal object TtsPlaybackStore {
     }
 
     private fun speakFrom(chunkIndex: Int) {
+        ownerHandler.removeCallbacks(idleRelease)
         if (settings.engineName != boundEngineName || (!usingEdge() && engine == null)) {
             pendingInitialization.add { result ->
                 result.fold(
@@ -617,6 +633,7 @@ internal object TtsPlaybackStore {
 
     /** Retries with 1, 2, 4, 8, 16 s backoff; the chunk keeps its in-flight slot meanwhile. */
     private fun retryEdge(index: Int, attempt: Int, message: String) {
+        Log.w(TAG, "edge retry: chunk=$index, attempt=$attempt, $message")
         if (attempt + 1 >= EDGE_ATTEMPTS) {
             fail("Microsoft Edge voices are unreachable ($message). Check your connection and press play.")
             return
@@ -776,13 +793,18 @@ internal object TtsPlaybackStore {
     }
 
     private fun completeQueue() {
+        Log.i(TAG, "completeQueue")
         halt()
         state = TtsPlaybackState.COMPLETED
         emitState()
-        applicationContext?.let { TtsPlaybackService.stop(it) }
+        // The reader usually loads the next chapter right away; stopping the service and
+        // dropping audio focus here would force a cold restart for every chapter handover.
+        ownerHandler.removeCallbacks(idleRelease)
+        ownerHandler.postDelayed(idleRelease, IDLE_RELEASE_MS)
     }
 
     private fun fail(message: String) {
+        Log.w(TAG, "fail: $message")
         halt()
         rebinding = false
         state = TtsPlaybackState.ERROR

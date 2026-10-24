@@ -24,6 +24,7 @@ import {
 } from '@hooks/persisted/useSettings';
 import { getBatteryLevel } from 'react-native-device-info';
 import { PLUGIN_STORAGE } from '@utils/Storages';
+import { showToast } from '@utils/showToast';
 import { useChapterContext } from '../ChapterContext';
 import { ReaderSearchResult } from '../types';
 import { useTtsSession } from '../hooks/useTtsSession';
@@ -174,6 +175,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
   const adjacentChapterScriptRef = useRef(buildAdjacentChapterScript());
   const {
     command: runTtsCommand,
+    error: ttsError,
     loadAndPlay,
     progress: ttsProgress,
     seekTo: seekTts,
@@ -230,9 +232,19 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
   useEffect(() => {
     if (activeChapterIdRef.current !== chapter.id) {
       activeChapterIdRef.current = chapter.id;
-      runTtsCommand('stop');
+      // Auto-advancing: native load() replaces the queue, and stopping here would
+      // release audio focus and the service mid-handover.
+      if (!autoStartTTSRef.current) {
+        runTtsCommand('stop');
+      }
     }
   }, [chapter.id, runTtsCommand]);
+
+  useEffect(() => {
+    if (ttsError) {
+      showToast(ttsError);
+    }
+  }, [ttsError]);
 
   useEffect(() => {
     const script = buildAdjacentChapterScript(nextChapter, prevChapter);
@@ -498,15 +510,10 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
             autoStartTTSRef.current = false;
             setTimeout(() => {
               webViewRef.current?.injectJavaScript(`
-              (function() {
-                if (window.tts && reader.generalSettings.val.TTSEnable) {
-                  setTimeout(() => {
-                    tts.start();
-                  }, 500);
-                }
-              })();
+              if (window.tts && reader.generalSettings.val.TTSEnable) { tts.start(); }
+              true;
             `);
-            }, 300);
+            }, 800);
           }
         }}
         onMessage={(ev: { nativeEvent: { data: string } }) => {
