@@ -24,6 +24,12 @@ export interface Reader {
     afterId?: number;
     message?: string;
   }>;
+  /** Continuous mode: loading state of the chapter before the first one. */
+  prependState: State<{
+    status: 'idle' | 'loading' | 'failed' | 'start';
+    beforeId?: number;
+    message?: string;
+  }>;
 
   novel: NovelInfo;
   chapter: ChapterInfo;
@@ -70,6 +76,11 @@ export interface Reader {
   appendFailed: (afterId: number, message: string) => void;
   appendEnd: (afterId: number) => void;
   retryAppend: () => void;
+  prependChapter: (payload: { chapter: ChapterInfo; html: string }) => void;
+  prependFailed: (beforeId: number, message: string) => void;
+  prependStart: (beforeId: number) => void;
+  retryPrepend: () => void;
+  pullToPrepend: () => boolean;
   continueTTS: (root?: HTMLElement) => boolean;
 }
 

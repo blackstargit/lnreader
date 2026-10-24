@@ -151,7 +151,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
     onUserInteraction,
     isTTSReadingRef,
     refetch,
-    loadChapterAfter,
+    loadChapterBeside,
     setActiveChapter,
   } = useChapterContext();
   const theme = useTheme();
@@ -180,7 +180,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
   const nextChapterScreenVisible = useRef<boolean>(false);
   const autoStartTTSRef = useRef<boolean>(false);
   const documentChapterIdRef = useRef(documentChapter.id);
-  const pendingAppendsRef = useRef(new Set<number>());
+  const pendingAppendsRef = useRef(new Set<string>());
   const adjacentChapterScriptRef = useRef(buildAdjacentChapterScript());
   const {
     command: runTtsCommand,
@@ -493,27 +493,35 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
     }
   }, [chapter.id, documentChapter.id, setActiveChapter, source]);
 
-  const appendNextChapter = (afterId: number) => {
+  const addAdjacentChapter = (
+    chapterId: number,
+    direction: 'NEXT' | 'PREV',
+  ) => {
     const pending = pendingAppendsRef.current;
-    if (pending.has(afterId)) {
+    const key = `${direction}:${chapterId}`;
+    if (pending.has(key)) {
       return;
     }
-    pending.add(afterId);
+    pending.add(key);
+    const [add, fail, none] =
+      direction === 'NEXT'
+        ? ['appendChapter', 'appendFailed', 'appendEnd']
+        : ['prependChapter', 'prependFailed', 'prependStart'];
     const requestSource = sourceRef.current;
     const inject = (script: string) => {
       if (sourceRef.current === requestSource) {
         webViewRef.current?.injectJavaScript(`${script}; true;`);
       }
     };
-    loadChapterAfter(afterId)
+    loadChapterBeside(chapterId, direction)
       .then(result => {
         if (!result) {
-          inject(`window.reader?.appendEnd?.(${afterId})`);
+          inject(`window.reader?.${none}?.(${chapterId})`);
           return;
         }
         const { removeText, replaceText } = readerSettingsRef.current;
         inject(
-          `window.reader?.appendChapter?.(${JSON.stringify({
+          `window.reader?.${add}?.(${JSON.stringify({
             chapter: result.chapter,
             html: applyTextModifications(
               result.html,
@@ -526,12 +534,12 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
       })
       .catch((e: Error) => {
         inject(
-          `window.reader?.appendFailed?.(${afterId}, ${JSON.stringify(
+          `window.reader?.${fail}?.(${chapterId}, ${JSON.stringify(
             e?.message ?? '',
           )})`,
         );
       })
-      .finally(() => pending.delete(afterId));
+      .finally(() => pending.delete(key));
   };
 
   return (
@@ -674,7 +682,12 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
               break;
             case 'need-next':
               if (typeof event.data === 'number') {
-                appendNextChapter(event.data);
+                addAdjacentChapter(event.data, 'NEXT');
+              }
+              break;
+            case 'need-prev':
+              if (typeof event.data === 'number') {
+                addAdjacentChapter(event.data, 'PREV');
               }
               break;
             case 'active-chapter':

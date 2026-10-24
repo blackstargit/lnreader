@@ -350,10 +350,11 @@ export default function useChapter(
     [loadPageBoundaryChapter, novel.totalPages, prefetchChapter],
   );
 
-  const findNextChapter = useCallback(
-    async (chap: ChapterInfo) => {
+  const findAdjacentChapter = useCallback(
+    async (chap: ChapterInfo, direction: 'NEXT' | 'PREV') => {
       const excludedScanlators = excludedScanlatorsRef.current || [];
-      const next = await getNextChapter(
+      const query = direction === 'NEXT' ? getNextChapter : getPrevChapter;
+      const adjacent = await query(
         chap.novelId,
         chap.position!,
         chap.page ?? '',
@@ -361,13 +362,17 @@ export default function useChapter(
       );
       const totalPages = novel.totalPages ?? 0;
       const currentPage = Number(chap.page);
-      if (next || !(totalPages > 0 && currentPage < totalPages)) {
-        return next;
+      const atBoundary =
+        direction === 'NEXT'
+          ? totalPages > 0 && currentPage < totalPages
+          : currentPage > 1;
+      if (adjacent || !atBoundary) {
+        return adjacent;
       }
       return loadPageBoundaryChapter(
         chap,
-        String(currentPage + 1),
-        'NEXT',
+        String(direction === 'NEXT' ? currentPage + 1 : currentPage - 1),
+        direction,
         excludedScanlators,
       );
     },
@@ -375,32 +380,32 @@ export default function useChapter(
   );
 
   /**
-   * Loads the chapter after `afterId` to be appended to the document in
-   * continuous mode. Resolves to `undefined` when there is no next chapter or
-   * the document was replaced in the meantime.
+   * Loads the chapter after (or before) `chapterId` to be added to the
+   * document in continuous mode. Resolves to `undefined` when there is no such
+   * chapter or the document was replaced in the meantime.
    */
-  const loadChapterAfter = useCallback(
-    async (afterId: number) => {
+  const loadChapterBeside = useCallback(
+    async (chapterId: number, direction: 'NEXT' | 'PREV') => {
       const loaded = loadedChaptersRef.current;
-      const after = loaded.get(afterId);
-      if (!after) {
+      const from = loaded.get(chapterId);
+      if (!from) {
         return undefined;
       }
-      const next = await findNextChapter(after);
-      if (!next) {
+      const adjacent = await findAdjacentChapter(from, direction);
+      if (!adjacent) {
         return undefined;
       }
-      const html = await loadChapterHtml(next);
+      const html = await loadChapterHtml(adjacent);
       if (loaded !== loadedChaptersRef.current) {
         return undefined;
       }
-      loaded.set(next.id, next);
-      findNextChapter(next)
+      loaded.set(adjacent.id, adjacent);
+      findAdjacentChapter(adjacent, direction)
         .then(prefetchChapter)
         .catch(() => {});
-      return { chapter: next, html };
+      return { chapter: adjacent, html };
     },
-    [findNextChapter, loadChapterHtml, prefetchChapter],
+    [findAdjacentChapter, loadChapterHtml, prefetchChapter],
   );
 
   /** Makes a chapter of the current document the one being read. */
@@ -646,7 +651,7 @@ export default function useChapter(
       setChapter,
       setLoading,
       getChapter,
-      loadChapterAfter,
+      loadChapterBeside,
       setActiveChapter,
       onUserInteraction,
       isTTSReadingRef,
@@ -667,7 +672,7 @@ export default function useChapter(
       clearChapterSearch,
       refetch,
       getChapter,
-      loadChapterAfter,
+      loadChapterBeside,
       setActiveChapter,
       onUserInteraction,
       isTTSReadingRef,

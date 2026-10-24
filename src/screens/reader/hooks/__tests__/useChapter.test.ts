@@ -442,9 +442,12 @@ describe('useChapter', () => {
     const { result } = renderHook(() => useFlatChapter(initialChapter));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    let appended: Awaited<ReturnType<typeof result.current.loadChapterAfter>>;
+    let appended: Awaited<ReturnType<typeof result.current.loadChapterBeside>>;
     await act(async () => {
-      appended = await result.current.loadChapterAfter(initialChapter.id);
+      appended = await result.current.loadChapterBeside(
+        initialChapter.id,
+        'NEXT',
+      );
     });
     expect(appended!).toEqual({ chapter: nextChapter, html: 'next body' });
 
@@ -477,6 +480,27 @@ describe('useChapter', () => {
     );
   });
 
+  it('surfaces a failed page fetch when loading the previous chapter so it can be retried', async () => {
+    const pageStart = makeChapter(1, '2');
+    const store = createStore({ [pageStart.id]: 'initial body' });
+    mockUseNovelActions.mockReturnValue(store.state);
+    mockGetDbChapter.mockResolvedValue(pageStart);
+    mockGetChapterCount.mockResolvedValue(0);
+    mockFetchPage.mockRejectedValue(new Error('offline'));
+
+    const { result } = renderHook(() => useFlatChapter(pageStart));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await expect(
+      result.current.loadChapterBeside(pageStart.id, 'PREV'),
+    ).rejects.toThrow('offline');
+    expect(mockFetchPage).toHaveBeenLastCalledWith(
+      novel.pluginId,
+      novel.path,
+      '1',
+    );
+  });
+
   it('does not append to a document that has been replaced', async () => {
     const otherChapter = makeChapter(5, '1');
     const store = createStore({
@@ -494,7 +518,7 @@ describe('useChapter', () => {
     });
 
     await expect(
-      result.current.loadChapterAfter(initialChapter.id),
+      result.current.loadChapterBeside(initialChapter.id, 'NEXT'),
     ).resolves.toBeUndefined();
   });
 

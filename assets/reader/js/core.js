@@ -106,7 +106,11 @@ window.reader = new (function () {
       ) || 0;
     if (this.generalSettings.val.pageReader) {
       this.chapterWidth = this.chapterElement.scrollWidth;
-    } else if (this.chapterElement.id === 'LNReader-chapter') {
+    } else if (
+      this.chapterElement.id === 'LNReader-chapter' &&
+      this.chapterElement ===
+        document.querySelector('#LNReader-chapter, .ln-chapter')
+    ) {
       this.chapterTop = 0;
       this.chapterHeight = this.chapterElement.scrollHeight + this.paddingTop;
     } else {
@@ -735,7 +739,10 @@ window.pageReader = pageReader = new (function () {
       requestAnimationFrame(() => {
         reader.refresh();
         window.scrollTo({
-          top: reader.chapterHeight * ratio - reader.layoutHeight,
+          top:
+            reader.chapterTop +
+            reader.chapterHeight * ratio -
+            reader.layoutHeight,
           behavior: 'smooth',
         });
       });
@@ -1002,7 +1009,9 @@ const bindChapterTouch = (function () {
       window.scrollY <= 0
     ) {
       e.preventDefault();
-      reader.post({ type: 'refresh' });
+      if (!reader.pullToPrepend?.()) {
+        reader.post({ type: 'refresh' });
+      }
       return;
     }
     if (
@@ -1102,10 +1111,16 @@ bindChapterTouch(reader.chapterElement);
 (function () {
   /** status: 'idle' | 'loading' | 'failed' | 'end', for the last chapter. */
   const appendState = (reader.appendState = van.state({ status: 'idle' }));
+  /** status: 'idle' | 'loading' | 'failed' | 'start', for the first chapter. */
+  const prependState = (reader.prependState = van.state({ status: 'idle' }));
   let checkQueued = false;
   let ttsWaiting = false;
   let reloadRequested = false;
+  // Not before the reader has moved away from the restored position: opening a
+  // chapter at its start must not immediately load the one before it.
+  let prependArmed = false;
 
+  const firstContainer = () => reader.chapterContainers()[0];
   const lastContainer = () => {
     const containers = reader.chapterContainers();
     return containers[containers.length - 1];
@@ -1118,24 +1133,64 @@ bindChapterTouch(reader.chapterElement);
   };
   reader.retryAppend = requestNext;
 
-  const checkNeedNext = () => {
+  const requestPrev = () => {
+    const beforeId = firstContainer().lnChapter.id;
+    prependState.val = { status: 'loading', beforeId };
+    reader.post({ type: 'need-prev', data: beforeId });
+  };
+  reader.retryPrepend = requestPrev;
+
+  const check = () => {
     checkQueued = false;
-    if (!reader.isContinuous() || appendState.val.status !== 'idle') {
+    if (!reader.isContinuous()) {
       return;
     }
-    const remaining =
-      lastContainer().getBoundingClientRect().bottom - window.innerHeight;
-    if (remaining < 2 * window.innerHeight) {
-      requestNext();
+    if (appendState.val.status === 'idle') {
+      const remaining =
+        lastContainer().getBoundingClientRect().bottom - window.innerHeight;
+      if (remaining < 2 * window.innerHeight) {
+        requestNext();
+      }
+    }
+    if (
+      !prependArmed &&
+      positionRestored &&
+      (restoredScrollTop === null ||
+        Math.abs(window.scrollY - Math.max(0, restoredScrollTop)) > 4)
+    ) {
+      prependArmed = true;
+    }
+    if (
+      prependArmed &&
+      prependState.val.status === 'idle' &&
+      firstContainer().getBoundingClientRect().top > -window.innerHeight
+    ) {
+      requestPrev();
     }
   };
   const scheduleCheck = () => {
     if (!checkQueued) {
       checkQueued = true;
-      requestAnimationFrame(checkNeedNext);
+      requestAnimationFrame(check);
     }
   };
   window.addEventListener('scroll', scheduleCheck, { passive: true });
+
+  /**
+   * Pulling down at the top loads the previous chapter while there is one;
+   * false when the pull should refresh the chapter as usual.
+   */
+  reader.pullToPrepend = () => {
+    const { status } = prependState.val;
+    if (!reader.isContinuous() || status === 'start') {
+      return false;
+    }
+    prependArmed = true;
+    if (status === 'idle' || status === 'failed') {
+      requestPrev();
+    }
+    return true;
+  };
 
   van.derive(() => {
     if (reader.isContinuous()) {
@@ -1153,52 +1208,84 @@ bindChapterTouch(reader.chapterElement);
     }
   });
 
-  const settle = (afterId, state) => {
-    const current = appendState.val;
-    if (current.status !== 'loading' || current.afterId !== afterId) {
+  const settle = (state, id, next) => {
+    const current = state.val;
+    if (
+      current.status !== 'loading' ||
+      (current.afterId ?? current.beforeId) !== id
+    ) {
       return false;
     }
-    appendState.val = state;
+    state.val = next;
     return true;
   };
 
-  // Drops chapters well behind the reader so the document doesn't grow forever.
-  const trim = () => {
-    const containers = reader.chapterContainers();
-    const activeIndex = containers.indexOf(reader.chapterElement);
-    if (containers.length < 5 || activeIndex < 3) {
-      return;
-    }
-    let end = activeIndex - 2;
-    // TTS continues into the chapters after the one it reads.
-    const ttsIndex = tts.started ? containers.indexOf(tts.root) : -1;
-    if (ttsIndex >= 0) {
-      end = Math.min(end, ttsIndex);
-    }
+  /**
+   * Runs `change` and scrolls by however far it moved the active chapter, so
+   * changes above the reader don't move the text. Scroll anchoring may or may
+   * not have compensated already; measuring covers both.
+   */
+  const keepPosition = change => {
     const anchorTop = reader.chapterElement.getBoundingClientRect().top;
-    for (const el of containers.slice(0, end)) {
-      if (el.id === 'LNReader-chapter') {
-        // Kept in the document: plugins and custom code look it up by id.
-        el.hidden = true;
-        el.innerHTML = '';
-        el.lnRawHTML = '';
-        el.lnAppliedHTML = '';
-      } else {
-        el.lnDivider.remove();
-        el.remove();
-      }
-    }
-    // Scroll anchoring may or may not have compensated already; measuring
-    // covers both.
+    change();
     const shift = reader.chapterElement.getBoundingClientRect().top - anchorTop;
     if (shift) {
       window.scrollTo({ top: window.scrollY + shift, behavior: 'instant' });
     }
   };
 
+  const removeChapter = el => {
+    el.lnDivider?.remove();
+    el.lnDivider = undefined;
+    if (el.id === 'LNReader-chapter') {
+      // Kept in the document: plugins and custom code look it up by id.
+      el.hidden = true;
+      el.innerHTML = '';
+      el.lnRawHTML = '';
+      el.lnAppliedHTML = '';
+    } else {
+      el.remove();
+    }
+  };
+
+  // Drops chapters well away from the reader so the document doesn't grow
+  // forever; they are loaded again when scrolled back to.
+  const trim = () => {
+    const containers = reader.chapterContainers();
+    const activeIndex = containers.indexOf(reader.chapterElement);
+    if (containers.length < 5) {
+      return;
+    }
+    let end = activeIndex - 2;
+    const ttsIndex = tts.started ? containers.indexOf(tts.root) : -1;
+    if (ttsIndex >= 0) {
+      end = Math.min(end, ttsIndex);
+    }
+    const behind = containers.slice(0, Math.max(0, end));
+    // TTS continues into the chapters after the one it reads.
+    const ahead =
+      ttsIndex >= 0
+        ? []
+        : containers
+            .slice(activeIndex + 3)
+            .filter(
+              el =>
+                (el.lnDivider ?? el).getBoundingClientRect().top >=
+                window.innerHeight,
+            );
+    if (behind.length) {
+      keepPosition(() => behind.forEach(removeChapter));
+      prependState.val = { status: 'idle' };
+    }
+    if (ahead.length) {
+      ahead.forEach(removeChapter);
+      appendState.val = { status: 'idle' };
+    }
+  };
+
   /**
    * Makes `active` the chapter being read, so search, text tools, progress and
-   * TTS all work on it; chapters before it count as read.
+   * TTS all work on it; chapters scrolled past on the way down count as read.
    */
   const activate = active => {
     if (active === reader.chapterElement) {
@@ -1227,42 +1314,48 @@ bindChapterTouch(reader.chapterElement);
     tts.start(undefined, el);
   };
 
+  const createChapter = (chapter, html) => {
+    try {
+      const custom =
+        typeof lnApplyCustomJS === 'function' ? lnApplyCustomJS(html) : html;
+      if (typeof custom === 'string') {
+        html = custom;
+      }
+    } catch (_e) {}
+    const el = van.tags.div({
+      class: 'ln-chapter',
+      'data-chapter-id': chapter.id,
+    });
+    el.innerHTML = html;
+    el.lnChapter = chapter;
+    el.lnDivider = van.tags.div({ class: 'ln-chapter-divider' }, chapter.name);
+    el.lnRawHTML = html;
+    el.lnAppliedHTML = html;
+    return el;
+  };
+
+  const setUpChapter = el => {
+    reader.applyTextOptions(el);
+    bindChapterTouch(el);
+    el.addEventListener('load', () => reader.refresh(), true);
+  };
+
   reader.appendChapter = ({ chapter, html, strings }) => {
     const last = lastContainer();
-    if (!settle(last.lnChapter.id, { status: 'idle' })) {
+    if (!settle(appendState, last.lnChapter.id, { status: 'idle' })) {
       return;
     }
     let el;
     try {
-      try {
-        const custom =
-          typeof lnApplyCustomJS === 'function' ? lnApplyCustomJS(html) : html;
-        if (typeof custom === 'string') {
-          html = custom;
-        }
-      } catch (_e) {}
-      const divider = van.tags.div(
-        { class: 'ln-chapter-divider' },
-        chapter.name,
-      );
-      el = van.tags.div({
-        class: 'ln-chapter',
-        'data-chapter-id': chapter.id,
-      });
-      el.innerHTML = html;
-      el.lnChapter = chapter;
-      el.lnDivider = divider;
-      el.lnRawHTML = html;
-      el.lnAppliedHTML = html;
-      last.after(divider, el);
-      reader.applyTextOptions(el);
-      bindChapterTouch(el);
-      el.addEventListener('load', () => reader.refresh(), true);
+      el = createChapter(chapter, html);
+      last.after(el.lnDivider, el);
+      setUpChapter(el);
       Object.assign(reader.strings, strings);
     } catch (e) {
-      el?.lnDivider?.remove();
-      el?.remove();
-      el = undefined;
+      if (el) {
+        removeChapter(el);
+        el = undefined;
+      }
       appendState.val = {
         status: 'failed',
         afterId: last.lnChapter.id,
@@ -1282,6 +1375,40 @@ bindChapterTouch(reader.chapterElement);
     scheduleCheck();
   };
 
+  reader.prependChapter = ({ chapter, html }) => {
+    const first = firstContainer();
+    if (!settle(prependState, first.lnChapter.id, { status: 'idle' })) {
+      return;
+    }
+    let el;
+    try {
+      keepPosition(() => {
+        el = createChapter(chapter, html);
+        if (!first.lnDivider) {
+          first.lnDivider = van.tags.div(
+            { class: 'ln-chapter-divider' },
+            first.lnChapter.name,
+          );
+          first.before(first.lnDivider);
+        }
+        first.lnDivider.before(el.lnDivider, el);
+        setUpChapter(el);
+      });
+      // The document chapter's restored position no longer applies.
+      restoredScrollTop = null;
+    } catch (e) {
+      if (el) {
+        keepPosition(() => removeChapter(el));
+      }
+      prependState.val = {
+        status: 'failed',
+        beforeId: first.lnChapter.id,
+        message: String(e),
+      };
+    }
+    scheduleCheck();
+  };
+
   const stopWaitingTTS = () => {
     if (ttsWaiting) {
       ttsWaiting = false;
@@ -1290,16 +1417,22 @@ bindChapterTouch(reader.chapterElement);
   };
 
   reader.appendFailed = (afterId, message) => {
-    if (settle(afterId, { status: 'failed', afterId, message })) {
+    if (settle(appendState, afterId, { status: 'failed', afterId, message })) {
       stopWaitingTTS();
     }
   };
 
   reader.appendEnd = afterId => {
-    if (settle(afterId, { status: 'end', afterId })) {
+    if (settle(appendState, afterId, { status: 'end', afterId })) {
       stopWaitingTTS();
     }
   };
+
+  reader.prependFailed = (beforeId, message) =>
+    settle(prependState, beforeId, { status: 'failed', beforeId, message });
+
+  reader.prependStart = beforeId =>
+    settle(prependState, beforeId, { status: 'start', beforeId });
 
   /** Continues TTS with the chapter after `root`; false if there is none. */
   reader.continueTTS = root => {

@@ -82,6 +82,31 @@ const ChapterEnding = () => {
   };
 };
 
+/** Continuous mode: loading or retry for the chapter above the first one. */
+const PrependStatus = () => {
+  return () => {
+    const { status } = reader.prependState.val;
+    if (
+      !reader.isContinuous() ||
+      (status !== 'loading' && status !== 'failed')
+    ) {
+      return div();
+    }
+    return div(
+      {
+        class: 'ln-prepend-status',
+        onclick: e => {
+          e.stopPropagation();
+          if (status === 'failed') {
+            reader.retryPrepend();
+          }
+        },
+      },
+      status === 'loading' ? reader.strings.loading : reader.strings.retry,
+    );
+  };
+};
+
 const Scrollbar = () => {
   const horizontal = van.derive(
     () => !reader.generalSettings.val.verticalSeekbar,
@@ -602,6 +627,7 @@ const TTSController = () => {
 const ReaderUI = () => {
   return div(
     ToolWrapper(),
+    PrependStatus(),
     TTSController(),
     ModalWrapper(),
     Footer(),

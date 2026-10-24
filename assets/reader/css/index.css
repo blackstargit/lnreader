@@ -79,6 +79,20 @@ body {
   user-select: none;
 }
 
+.ln-prepend-status {
+  position: fixed;
+  top: calc(var(--StatusBar-currentHeight) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 999;
+  padding: 4px 16px;
+  border-radius: 50px;
+  background-color: var(--theme-surface-0-9);
+  color: var(--theme-onSurface);
+  font-size: 14px;
+  user-select: none;
+}
+
 hr {
   margin-top: 20px;
   margin-bottom: 20px;
