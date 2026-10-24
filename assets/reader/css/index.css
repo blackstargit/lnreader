@@ -63,9 +63,20 @@ body {
   font-family: var(--readerSettings-fontFamily);
 }
 
-#LNReader-chapter {
+#LNReader-chapter,
+.ln-chapter {
   padding-left: var(--readerSettings-padding);
   padding-right: var(--readerSettings-padding);
+}
+
+.ln-chapter-divider {
+  margin: 48px var(--readerSettings-padding) 16px;
+  padding-top: 24px;
+  border-top: 1px solid var(--theme-outlineVariant);
+  font-size: 1.25em;
+  font-weight: bold;
+  text-align: center;
+  user-select: none;
 }
 
 hr {
@@ -88,7 +99,7 @@ img {
   max-width: 100%;
 }
 
-div:has(> table):not(#LNReader-chapter) {
+div:has(> table):not(#LNReader-chapter, .ln-chapter) {
   overflow: auto;
 }
 
@@ -201,11 +212,7 @@ td {
 mark.lnreader-search-match {
   border-radius: 2px;
   color: inherit;
-  background-color: color-mix(
-    in srgb,
-    var(--theme-tertiary) 55%,
-    transparent
-  );
+  background-color: color-mix(in srgb, var(--theme-tertiary) 55%, transparent);
 }
 
 mark.lnreader-search-match-active {

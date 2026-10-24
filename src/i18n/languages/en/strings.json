@@ -659,6 +659,8 @@
       "tapToScroll": "Tap to scroll",
       "tapToScrollDescription": "Tap the top or bottom of the screen to scroll through the chapter",
       "color": "Color",
+      "continuousChapters": "Continuous chapters",
+      "continuousChaptersDescription": "Load the next chapter below the current one as you scroll",
       "display": "Display",
       "fontStyle": "Font style",
       "fullscreen": "Fullscreen",

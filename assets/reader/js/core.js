@@ -21,6 +21,7 @@ window.reader = new (function () {
     chapterGeneralSettings,
     novel,
     chapter,
+    canAppendChapters,
     batteryLevel,
     autoSaveInterval,
     DEBUG,
@@ -40,6 +41,7 @@ window.reader = new (function () {
   this.adjacentVersion = van.state(0);
 
   this.chapterElement = document.querySelector('#LNReader-chapter');
+  this.chapterElement.lnChapter = chapter;
   this.selection = window.getSelection();
   this.viewport = document.querySelector('meta[name=viewport]');
 
@@ -57,7 +59,26 @@ window.reader = new (function () {
     this.adjacentVersion.val++;
   };
   this.autoSaveInterval = autoSaveInterval;
+  // In continuous mode every chapter container keeps its own untransformed
+  // markup; `rawHTML` stays the active chapter's so existing code keeps working.
+  Object.defineProperty(this, 'rawHTML', {
+    get: () => this.chapterElement.lnRawHTML,
+    set: html => {
+      this.chapterElement.lnRawHTML = html;
+    },
+  });
   this.rawHTML = this.chapterElement.innerHTML;
+
+  /** Chapters appended below the first one are only loaded in scroll mode. */
+  this.isContinuous = () =>
+    canAppendChapters === true &&
+    this.generalSettings.val.continuousChapters === true &&
+    !this.generalSettings.val.pageReader;
+  /** Chapter containers in document order: the first chapter, then appended ones. */
+  this.chapterContainers = () =>
+    [...document.querySelectorAll('#LNReader-chapter, .ln-chapter')].filter(
+      el => !el.hidden,
+    );
 
   //layout props
   this.paddingTop = parseInt(
@@ -67,6 +88,8 @@ window.reader = new (function () {
     10,
   );
   this.chapterHeight = this.chapterElement.scrollHeight + this.paddingTop;
+  /** Document offset of the active chapter; progress is relative to it. */
+  this.chapterTop = 0;
   this.layoutHeight = window.innerHeight;
   this.layoutWidth = window.innerWidth;
 
@@ -83,8 +106,13 @@ window.reader = new (function () {
       ) || 0;
     if (this.generalSettings.val.pageReader) {
       this.chapterWidth = this.chapterElement.scrollWidth;
-    } else {
+    } else if (this.chapterElement.id === 'LNReader-chapter') {
+      this.chapterTop = 0;
       this.chapterHeight = this.chapterElement.scrollHeight + this.paddingTop;
+    } else {
+      this.chapterTop =
+        this.chapterElement.getBoundingClientRect().top + window.scrollY;
+      this.chapterHeight = this.chapterElement.scrollHeight;
     }
   };
 
@@ -141,12 +169,16 @@ window.reader = new (function () {
   document.onscrollend = () => {
     onUserInteraction();
     if (!this.generalSettings.val.pageReader) {
+      this.updateActiveChapter?.();
       this.post({
         type: 'save',
         data: parseInt(
-          ((window.scrollY + this.layoutHeight) / this.chapterHeight) * 100,
+          ((window.scrollY + this.layoutHeight - this.chapterTop) /
+            this.chapterHeight) *
+            100,
           10,
         ),
+        chapterId: this.chapter.id,
       });
     }
   };
@@ -306,10 +338,15 @@ window.tts = new (function () {
     reader.post({ type: 'tts-command', data: { command: 'previous' } });
   };
 
-  this.start = element => {
-    const startElement = element ?? reader.chapterElement;
+  this.start = (element, container) => {
+    const root =
+      container ??
+      element?.closest?.('#LNReader-chapter, .ln-chapter') ??
+      reader.chapterElement;
+    const startElement = element ?? root;
+    this.root = root;
 
-    const readableEntries = this.getAllReadableElements(reader.chapterElement)
+    const readableEntries = this.getAllReadableElements(root)
       .map(readableElement => ({
         element: readableElement,
         text: this.normalizeText(readableElement.innerText),
@@ -320,7 +357,7 @@ window.tts = new (function () {
     this.textQueue = readableEntries.map(entry => entry.text);
 
     const requestedIndex =
-      element && element !== reader.chapterElement
+      element && element !== root
         ? this.allReadableElements.indexOf(startElement)
         : 0;
     const startIndex = requestedIndex >= 0 ? requestedIndex : 0;
@@ -333,6 +370,7 @@ window.tts = new (function () {
       data: {
         queue: this.textQueue,
         startIndex,
+        chapterName: root.lnChapter?.name,
       },
     });
   };
@@ -430,12 +468,15 @@ window.tts = new (function () {
 
   this.complete = () => {
     this.reading = false;
-    if (
-      reader.readerSettings.val.tts?.autoPageAdvance === true &&
-      reader.nextChapter
-    ) {
-      reader.post({ type: 'next', autoStartTTS: true });
-      return;
+    if (reader.readerSettings.val.tts?.autoPageAdvance === true) {
+      if (reader.isContinuous()) {
+        if (reader.continueTTS(this.root)) {
+          return;
+        }
+      } else if (reader.nextChapter) {
+        reader.post({ type: 'next', autoStartTTS: true });
+        return;
+      }
     }
     this.reset();
   };
@@ -789,7 +830,11 @@ window.addEventListener('resize', () => {
  * someone who has already started reading.
  */
 const correctReadingPosition = () => {
-  if (reader.generalSettings.val.pageReader || restoredScrollTop === null) {
+  if (
+    reader.generalSettings.val.pageReader ||
+    restoredScrollTop === null ||
+    reader.chapterElement.id !== 'LNReader-chapter'
+  ) {
     return;
   }
 
@@ -903,17 +948,17 @@ window.addEventListener('load', () => {
   };
 })();
 
-// swipe handler
-(function () {
+// swipe handler, bound to every chapter container
+const bindChapterTouch = (function () {
   this.initialX = null;
   this.initialY = null;
 
-  reader.chapterElement.addEventListener('touchstart', e => {
+  const onTouchStart = e => {
     this.initialX = e.changedTouches[0].screenX;
     this.initialY = e.changedTouches[0].screenY;
-  });
+  };
 
-  reader.chapterElement.addEventListener('touchmove', e => {
+  const onTouchMove = e => {
     if (reader.generalSettings.val.pageReader) {
       const diffX =
         (e.changedTouches[0].screenX - this.initialX) / reader.layoutWidth;
@@ -921,9 +966,9 @@ window.addEventListener('load', () => {
       reader.chapterElement.style.transform =
         'translateX(-' + (pageReader.page.val - diffX) * 100 + '%)';
     }
-  });
+  };
 
-  reader.chapterElement.addEventListener('touchend', e => {
+  const onTouchEnd = e => {
     const diffX = e.changedTouches[0].screenX - this.initialX;
     const diffY = e.changedTouches[0].screenY - this.initialY;
     if (reader.generalSettings.val.pageReader) {
@@ -973,8 +1018,15 @@ window.addEventListener('load', () => {
         reader.post({ type: 'prev' });
       }
     }
-  });
+  };
+
+  return el => {
+    el.addEventListener('touchstart', onTouchStart);
+    el.addEventListener('touchmove', onTouchMove);
+    el.addEventListener('touchend', onTouchEnd);
+  };
 })();
+bindChapterTouch(reader.chapterElement);
 
 // text options
 (function () {
@@ -982,12 +1034,12 @@ window.addEventListener('load', () => {
   // the untransformed chapter already parsed, so writing the same markup back
   // would re-parse and re-layout the whole chapter (and restart image loads)
   // for nothing - which is exactly what happens when neither transform is on.
-  let appliedHTML = reader.rawHTML;
+  reader.chapterElement.lnAppliedHTML = reader.rawHTML;
 
-  van.derive(() => {
-    let html = reader.rawHTML;
+  const transform = rawHTML => {
+    let html = rawHTML;
     if (reader.generalSettings.val.bionicReading) {
-      html = textVide.textVide(reader.rawHTML);
+      html = textVide.textVide(rawHTML);
     }
 
     if (reader.generalSettings.val.removeExtraParagraphSpacing) {
@@ -1011,12 +1063,29 @@ window.addEventListener('load', () => {
           '',
         );
     }
-    if (html === appliedHTML) {
+    return html;
+  };
+
+  /** Applies the text options to a chapter container; true if it changed. */
+  reader.applyTextOptions = el => {
+    const html = transform(el.lnRawHTML);
+    if (html === el.lnAppliedHTML) {
+      return false;
+    }
+    el.innerHTML = html;
+    el.lnAppliedHTML = html;
+    return true;
+  };
+
+  van.derive(() => {
+    let changed = false;
+    for (const el of reader.chapterContainers()) {
+      changed = reader.applyTextOptions(el) || changed;
+    }
+    if (!changed) {
       return;
     }
 
-    reader.chapterElement.innerHTML = html;
-    appliedHTML = html;
     reader.refresh();
     schedulePageCalculation();
 
@@ -1027,4 +1096,260 @@ window.addEventListener('load', () => {
       window.readerSearch.search(searchQuery, searchIndex);
     }
   });
+})();
+
+// continuous chapters
+(function () {
+  /** status: 'idle' | 'loading' | 'failed' | 'end', for the last chapter. */
+  const appendState = (reader.appendState = van.state({ status: 'idle' }));
+  let checkQueued = false;
+  let ttsWaiting = false;
+  let reloadRequested = false;
+
+  const lastContainer = () => {
+    const containers = reader.chapterContainers();
+    return containers[containers.length - 1];
+  };
+
+  const requestNext = () => {
+    const afterId = lastContainer().lnChapter.id;
+    appendState.val = { status: 'loading', afterId };
+    reader.post({ type: 'need-next', data: afterId });
+  };
+  reader.retryAppend = requestNext;
+
+  const checkNeedNext = () => {
+    checkQueued = false;
+    if (!reader.isContinuous() || appendState.val.status !== 'idle') {
+      return;
+    }
+    const remaining =
+      lastContainer().getBoundingClientRect().bottom - window.innerHeight;
+    if (remaining < 2 * window.innerHeight) {
+      requestNext();
+    }
+  };
+  const scheduleCheck = () => {
+    if (!checkQueued) {
+      checkQueued = true;
+      requestAnimationFrame(checkNeedNext);
+    }
+  };
+  window.addEventListener('scroll', scheduleCheck, { passive: true });
+
+  van.derive(() => {
+    if (reader.isContinuous()) {
+      scheduleCheck();
+    }
+    // Paged mode lays out the first chapter element only, so reopen the
+    // document on the chapter being read.
+    if (
+      reader.generalSettings.val.pageReader &&
+      reader.chapterElement.id !== 'LNReader-chapter' &&
+      !reloadRequested
+    ) {
+      reloadRequested = true;
+      reader.post({ type: 'refresh' });
+    }
+  });
+
+  const settle = (afterId, state) => {
+    const current = appendState.val;
+    if (current.status !== 'loading' || current.afterId !== afterId) {
+      return false;
+    }
+    appendState.val = state;
+    return true;
+  };
+
+  // Drops chapters well behind the reader so the document doesn't grow forever.
+  const trim = () => {
+    const containers = reader.chapterContainers();
+    const activeIndex = containers.indexOf(reader.chapterElement);
+    if (containers.length < 5 || activeIndex < 3) {
+      return;
+    }
+    let end = activeIndex - 2;
+    // TTS continues into the chapters after the one it reads.
+    const ttsIndex = tts.started ? containers.indexOf(tts.root) : -1;
+    if (ttsIndex >= 0) {
+      end = Math.min(end, ttsIndex);
+    }
+    const anchorTop = reader.chapterElement.getBoundingClientRect().top;
+    for (const el of containers.slice(0, end)) {
+      if (el.id === 'LNReader-chapter') {
+        // Kept in the document: plugins and custom code look it up by id.
+        el.hidden = true;
+        el.innerHTML = '';
+        el.lnRawHTML = '';
+        el.lnAppliedHTML = '';
+      } else {
+        el.lnDivider.remove();
+        el.remove();
+      }
+    }
+    // Scroll anchoring may or may not have compensated already; measuring
+    // covers both.
+    const shift = reader.chapterElement.getBoundingClientRect().top - anchorTop;
+    if (shift) {
+      window.scrollTo({ top: window.scrollY + shift, behavior: 'instant' });
+    }
+  };
+
+  /**
+   * Makes `active` the chapter being read, so search, text tools, progress and
+   * TTS all work on it; chapters before it count as read.
+   */
+  const activate = active => {
+    if (active === reader.chapterElement) {
+      return;
+    }
+    const containers = reader.chapterContainers();
+    const from = containers.indexOf(reader.chapterElement);
+    const to = containers.indexOf(active);
+    for (let i = Math.max(0, from); i < to; i++) {
+      reader.post({
+        type: 'save',
+        data: 100,
+        chapterId: containers[i].lnChapter.id,
+      });
+    }
+    reader.chapterElement = active;
+    reader.chapter = active.lnChapter;
+    reader.post({ type: 'active-chapter', data: active.lnChapter.id });
+    trim();
+    reader.refresh();
+  };
+
+  // Activated directly: with the screen off there is no scrollend to do it.
+  const readOn = el => {
+    activate(el);
+    tts.start(undefined, el);
+  };
+
+  reader.appendChapter = ({ chapter, html, strings }) => {
+    const last = lastContainer();
+    if (!settle(last.lnChapter.id, { status: 'idle' })) {
+      return;
+    }
+    let el;
+    try {
+      try {
+        const custom =
+          typeof lnApplyCustomJS === 'function' ? lnApplyCustomJS(html) : html;
+        if (typeof custom === 'string') {
+          html = custom;
+        }
+      } catch (_e) {}
+      const divider = van.tags.div(
+        { class: 'ln-chapter-divider' },
+        chapter.name,
+      );
+      el = van.tags.div({
+        class: 'ln-chapter',
+        'data-chapter-id': chapter.id,
+      });
+      el.innerHTML = html;
+      el.lnChapter = chapter;
+      el.lnDivider = divider;
+      el.lnRawHTML = html;
+      el.lnAppliedHTML = html;
+      last.after(divider, el);
+      reader.applyTextOptions(el);
+      bindChapterTouch(el);
+      el.addEventListener('load', () => reader.refresh(), true);
+      Object.assign(reader.strings, strings);
+    } catch (e) {
+      el?.lnDivider?.remove();
+      el?.remove();
+      el = undefined;
+      appendState.val = {
+        status: 'failed',
+        afterId: last.lnChapter.id,
+        message: String(e),
+      };
+    }
+
+    if (ttsWaiting) {
+      ttsWaiting = false;
+      if (!el) {
+        tts.reset();
+      } else if (tts.started) {
+        // Not started means TTS was stopped while the chapter was loading.
+        readOn(el);
+      }
+    }
+    scheduleCheck();
+  };
+
+  const stopWaitingTTS = () => {
+    if (ttsWaiting) {
+      ttsWaiting = false;
+      tts.reset();
+    }
+  };
+
+  reader.appendFailed = (afterId, message) => {
+    if (settle(afterId, { status: 'failed', afterId, message })) {
+      stopWaitingTTS();
+    }
+  };
+
+  reader.appendEnd = afterId => {
+    if (settle(afterId, { status: 'end', afterId })) {
+      stopWaitingTTS();
+    }
+  };
+
+  /** Continues TTS with the chapter after `root`; false if there is none. */
+  reader.continueTTS = root => {
+    const containers = reader.chapterContainers();
+    const index = containers.indexOf(root);
+    if (index < 0) {
+      return false;
+    }
+    if (containers[index + 1]) {
+      readOn(containers[index + 1]);
+      return true;
+    }
+    const { status } = appendState.val;
+    if (status === 'end' || status === 'failed') {
+      return false;
+    }
+    ttsWaiting = true;
+    if (status === 'idle') {
+      requestNext();
+    }
+    return true;
+  };
+
+  /**
+   * Makes the chapter at the top of the viewport the active one. Runs on
+   * scrollend.
+   */
+  reader.updateActiveChapter = () => {
+    const containers = reader.chapterContainers();
+    if (containers.length < 2) {
+      return;
+    }
+    const atBottom =
+      window.scrollY + window.innerHeight >=
+      document.documentElement.scrollHeight - 2;
+    // At the very bottom a short last chapter can never reach the top.
+    const probe = atBottom ? window.innerHeight - 1 : window.innerHeight * 0.1;
+    let active = containers[0];
+    for (const el of containers) {
+      if (el.getBoundingClientRect().top > probe) {
+        break;
+      }
+      active = el;
+    }
+    // While narrating, the chapter being read aloud stays active even if its
+    // start hasn't reached the top of the screen yet.
+    if (tts.reading && containers.includes(tts.root)) {
+      active = tts.root;
+    }
+    activate(active);
+    reader.refresh();
+  };
 })();

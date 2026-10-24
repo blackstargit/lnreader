@@ -557,6 +557,8 @@ export interface StringMap {
   'readerScreen.bottomSheet.tapToScroll': 'string';
   'readerScreen.bottomSheet.tapToScrollDescription': 'string';
   'readerScreen.bottomSheet.color': 'string';
+  'readerScreen.bottomSheet.continuousChapters': 'string';
+  'readerScreen.bottomSheet.continuousChaptersDescription': 'string';
   'readerScreen.bottomSheet.display': 'string';
   'readerScreen.bottomSheet.fontStyle': 'string';
   'readerScreen.bottomSheet.fullscreen': 'string';

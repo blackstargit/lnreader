@@ -122,6 +122,11 @@ const navigationPreferences: GeneralPreference[] = [
     description: 'swipeGesturesDescription',
   },
   {
+    key: 'continuousChapters',
+    label: 'continuousChapters',
+    description: 'continuousChaptersDescription',
+  },
+  {
     key: 'useVolumeButtons',
     label: 'volumeButtonsScroll',
     description: 'volumeButtonsScrollDescription',
@@ -196,6 +201,9 @@ const GeneralTab: React.FC = React.memo(() => {
         {getString('readerScreen.bottomSheet.navigation')}
       </List.SubHeader>
       {navigationPreferences.map(item => {
+        if (item.key === 'continuousChapters' && settings.pageReader) {
+          return null;
+        }
         if (item.key === 'pageReader') {
           return (
             <React.Fragment key={item.key}>

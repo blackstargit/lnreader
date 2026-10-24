@@ -8,6 +8,11 @@ body.page-reader {
   padding-bottom: 0;
 }
 
+body.page-reader > .ln-chapter,
+body.page-reader > .ln-chapter-divider {
+  display: none;
+}
+
 body.page-reader > #LNReader-chapter {
   height: calc(100% - var(--pageReader-footerHeight, 0px));
   column-width: calc(100vw - var(--readerSettings-padding) * 2);

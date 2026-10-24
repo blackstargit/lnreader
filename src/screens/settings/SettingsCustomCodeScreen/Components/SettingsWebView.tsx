@@ -226,6 +226,7 @@ const SettingsWebView = () => {
                       generalSettings.showScrollPercentage
                     },
                     swipeGestures: false,
+                    continuousChapters: false,
                     showBatteryAndTime: ${generalSettings.showBatteryAndTime},
                     verticalSeekbar: ${generalSettings.verticalSeekbar},
                     bionicReading: ${generalSettings.bionicReading},

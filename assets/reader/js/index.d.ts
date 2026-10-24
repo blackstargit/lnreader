@@ -18,6 +18,12 @@ export interface Reader {
   batteryLevel: State<number>;
   /** Bumped whenever the app pushes newly resolved adjacent chapters. */
   adjacentVersion: State<number>;
+  /** Continuous mode: loading state of the chapter after the last one. */
+  appendState: State<{
+    status: 'idle' | 'loading' | 'failed' | 'end';
+    afterId?: number;
+    message?: string;
+  }>;
 
   novel: NovelInfo;
   chapter: ChapterInfo;
@@ -31,6 +37,8 @@ export interface Reader {
     noNextChapter: string;
     removeText: string;
     replaceText: string;
+    loading: string;
+    retry: string;
   };
 
   setAdjacentChapters: (adjacent: {
@@ -43,11 +51,26 @@ export interface Reader {
   paddingTop: number;
   layoutHeight: number;
   layoutWidth: number;
+  chapterTop: number;
   chapterHeight: number;
   chapterWidth: number;
 
   post: (obj: Record<string, any>) => void;
   refresh: () => void;
+
+  isContinuous: () => boolean;
+  chapterContainers: () => HTMLElement[];
+  applyTextOptions: (el: HTMLElement) => boolean;
+  updateActiveChapter: () => void;
+  appendChapter: (payload: {
+    chapter: ChapterInfo;
+    html: string;
+    strings?: Partial<Reader['strings']>;
+  }) => void;
+  appendFailed: (afterId: number, message: string) => void;
+  appendEnd: (afterId: number) => void;
+  retryAppend: () => void;
+  continueTTS: (root?: HTMLElement) => boolean;
 }
 
 interface PageReader {
@@ -59,7 +82,8 @@ interface PageReader {
 interface TTS {
   started: boolean;
   reading: boolean;
-  start: (element?: HTMLElement) => void;
+  root?: HTMLElement;
+  start: (element?: HTMLElement, container?: HTMLElement) => void;
   resume: () => void;
   stop: () => void;
   pause: () => void;

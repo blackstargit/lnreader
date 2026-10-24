@@ -15,6 +15,7 @@ const NavigationTab: React.FC = () => {
     volumeButtonsOffset = null,
     verticalSeekbar = true,
     swipeGestures = false,
+    continuousChapters = false,
     pageReader = false,
     pageReaderInvertVolumeButtons = false,
     pageReaderDisableAnimation = false,
@@ -97,6 +98,21 @@ const NavigationTab: React.FC = () => {
           }
           theme={theme}
         />
+        {!pageReader && (
+          <SettingSwitch
+            label={getString('readerScreen.bottomSheet.continuousChapters')}
+            description={getString(
+              'readerScreen.bottomSheet.continuousChaptersDescription',
+            )}
+            value={continuousChapters}
+            onPress={() =>
+              setChapterGeneralSettings({
+                continuousChapters: !continuousChapters,
+              })
+            }
+            theme={theme}
+          />
+        )}
         <SettingSwitch
           label={getString('readerScreen.bottomSheet.tapToScroll')}
           description={getString(

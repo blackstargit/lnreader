@@ -428,6 +428,76 @@ describe('useChapter', () => {
     expect(result.current.chapterText).toBe('SANITIZED:next body');
   });
 
+  it('appends the next chapter and attributes progress to the chapter it was read in', async () => {
+    const store = createStore({
+      [initialChapter.id]: 'initial body',
+      [nextChapter.id]: 'next body',
+    });
+    mockUseNovelActions.mockReturnValue(store.state);
+    mockGetNextChapter.mockImplementation(
+      async (_novelId: number, position: number) =>
+        position === initialChapter.position ? nextChapter : undefined,
+    );
+
+    const { result } = renderHook(() => useFlatChapter(initialChapter));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let appended: Awaited<ReturnType<typeof result.current.loadChapterAfter>>;
+    await act(async () => {
+      appended = await result.current.loadChapterAfter(initialChapter.id);
+    });
+    expect(appended!).toEqual({ chapter: nextChapter, html: 'next body' });
+
+    act(() => result.current.setActiveChapter(nextChapter.id));
+
+    // Reading on into an appended chapter must not rebuild the document.
+    expect(result.current.chapter.id).toBe(nextChapter.id);
+    expect(result.current.documentChapter.id).toBe(initialChapter.id);
+
+    act(() => {
+      result.current.saveProgress(100, initialChapter.id);
+      result.current.saveProgress(100, initialChapter.id);
+      result.current.saveProgress(98);
+    });
+
+    expect(store.state.updateChapterProgress).toHaveBeenCalledWith(
+      initialChapter.id,
+      100,
+    );
+    expect(store.state.updateChapterProgress).toHaveBeenCalledWith(
+      nextChapter.id,
+      98,
+    );
+    expect(store.state.markChapterRead).toHaveBeenCalledTimes(2);
+    expect(store.state.markChapterRead).toHaveBeenCalledWith(initialChapter.id);
+    expect(store.state.markChapterRead).toHaveBeenCalledWith(nextChapter.id);
+    expect(mockParseChapterNumber).toHaveBeenCalledWith(
+      novel.name,
+      nextChapter.name,
+    );
+  });
+
+  it('does not append to a document that has been replaced', async () => {
+    const otherChapter = makeChapter(5, '1');
+    const store = createStore({
+      [initialChapter.id]: 'initial body',
+      [otherChapter.id]: 'other body',
+    });
+    mockUseNovelActions.mockReturnValue(store.state);
+    mockGetNextChapter.mockResolvedValue(nextChapter);
+
+    const { result } = renderHook(() => useFlatChapter(initialChapter));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.getChapter(otherChapter);
+    });
+
+    await expect(
+      result.current.loadChapterAfter(initialChapter.id),
+    ).resolves.toBeUndefined();
+  });
+
   it('injects scripts supporting paged and normal modes when volume buttons are pressed', async () => {
     const store = createStore();
     mockUseNovelActions.mockReturnValue(store.state);

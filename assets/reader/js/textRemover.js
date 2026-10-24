@@ -194,46 +194,33 @@ window.textRemover = new (function () {
 })();
 
 /**
- * Directly remove text from the chapter DOM without reloading the WebView.
- * Also updates reader.rawHTML so the text-options deriver (bionic reading,
- * paragraph spacing) doesn't re-introduce removed text on its next run.
+ * Directly remove text from the loaded chapters without reloading the WebView.
+ * Also updates each chapter's raw HTML so the text-options deriver (bionic
+ * reading, paragraph spacing) doesn't re-introduce removed text on its next run.
  */
 window.textRemover.performRemove = function (text) {
-  const el = document.querySelector('#LNReader-chapter');
-  if (!el) return;
-  const m = text.match(/^\/(.*)\/([gmiyuvsd]*)$/);
-  let result;
-  if (m) {
-    try {
-      result = el.innerHTML.replace(new RegExp(m[1], m[2]), '');
-    } catch (_e) {
-      return;
-    }
-  } else {
-    result = el.innerHTML.split(text).join('');
-  }
-  el.innerHTML = result;
-  reader.rawHTML = result;
+  window.textRemover.performReplace(text, '');
 };
 
 /**
- * Directly replace text in the chapter DOM without reloading the WebView.
- * Also updates reader.rawHTML so the text-options deriver stays in sync.
+ * Directly replace text in the loaded chapters without reloading the WebView.
+ * Also updates each chapter's raw HTML so the text-options deriver stays in sync.
  */
 window.textRemover.performReplace = function (from, to) {
-  const el = document.querySelector('#LNReader-chapter');
-  if (!el) return;
   const m = from.match(/^\/(.*)\/([gmiyuvsd]*)$/);
-  let result;
+  let pattern = from;
   if (m) {
     try {
-      result = el.innerHTML.replace(new RegExp(m[1], m[2]), to);
+      pattern = new RegExp(m[1], m[2]);
     } catch (_e) {
       return;
     }
-  } else {
-    result = el.innerHTML.split(from).join(to);
   }
-  el.innerHTML = result;
-  reader.rawHTML = result;
+  for (const el of reader.chapterContainers()) {
+    const result = m
+      ? el.innerHTML.replace(pattern, to)
+      : el.innerHTML.split(from).join(to);
+    el.innerHTML = result;
+    el.lnRawHTML = result;
+  }
 };

@@ -34,6 +34,7 @@ import { Dialog } from '@components/Dialog';
 import { TextInput } from 'react-native-paper';
 import useCustomCode from './Hooks/useCustomCode';
 import useTextModifications from './Hooks/useTextModifications';
+import { applyTextModifications } from '@utils/customCode';
 import {
   isChapterRefreshUrl,
   isPluginIssueReportUrl,
@@ -43,6 +44,7 @@ export type WebViewPostEvent = {
   type: string;
   data?: unknown;
   autoStartTTS?: boolean;
+  chapterId?: number;
   index?: number;
   total?: number;
 };
@@ -113,6 +115,9 @@ const buildAdjacentChapterScript = (
   true;
 `;
 
+const finishedString = (chapter: ChapterInfo) =>
+  getString('readerScreen.finished') + ': ' + chapter.name.trim();
+
 const { RNDeviceInfo } = NativeModules;
 const deviceInfoEmitter = new NativeEventEmitter(RNDeviceInfo);
 
@@ -136,6 +141,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
   const {
     novel,
     chapter,
+    documentChapter,
     chapterText: html,
     navigateChapter,
     saveProgress,
@@ -145,6 +151,8 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
     onUserInteraction,
     isTTSReadingRef,
     refetch,
+    loadChapterAfter,
+    setActiveChapter,
   } = useChapterContext();
   const theme = useTheme();
   const initialReaderSettings = useMemo(
@@ -152,7 +160,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
       ...initialChapterReaderSettings,
       ...getMMKVObject<ChapterReaderSettings>(CHAPTER_READER_SETTINGS),
     }), // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chapter.id],
+    [documentChapter],
   );
 
   const chapterGeneralSettings = useMemo(
@@ -162,7 +170,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
     }),
     // needed to preserve settings during chapter change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chapter.id],
+    [documentChapter],
   );
 
   const [batteryLevel] = useState(lastKnownBatteryLevel);
@@ -171,7 +179,8 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
   const pluginCustomCSS = `file://${PLUGIN_STORAGE}/${plugin?.id}/custom.css`;
   const nextChapterScreenVisible = useRef<boolean>(false);
   const autoStartTTSRef = useRef<boolean>(false);
-  const activeChapterIdRef = useRef(chapter.id);
+  const documentChapterIdRef = useRef(documentChapter.id);
+  const pendingAppendsRef = useRef(new Set<number>());
   const adjacentChapterScriptRef = useRef(buildAdjacentChapterScript());
   const {
     command: runTtsCommand,
@@ -229,16 +238,18 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
     }
   }, [ttsProgress, webViewRef]);
 
+  // Keyed on the document: in continuous mode the active chapter changes while
+  // TTS reads on into the next chapter of the same document.
   useEffect(() => {
-    if (activeChapterIdRef.current !== chapter.id) {
-      activeChapterIdRef.current = chapter.id;
+    if (documentChapterIdRef.current !== documentChapter.id) {
+      documentChapterIdRef.current = documentChapter.id;
       // Auto-advancing: native load() replaces the queue, and stopping here would
       // release audio focus and the service mid-handover.
       if (!autoStartTTSRef.current) {
         runTtsCommand('stop');
       }
     }
-  }, [chapter.id, runTtsCommand]);
+  }, [documentChapter.id, runTtsCommand]);
 
   useEffect(() => {
     if (ttsError) {
@@ -330,7 +341,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
     // eslint-disable-next-line react-hooks/refs
     const isNextChapterScreenVisible = nextChapterScreenVisible.current;
     return {
-      baseUrl: !chapter.isDownloaded ? plugin?.site : undefined,
+      baseUrl: !documentChapter.isDownloaded ? plugin?.site : undefined,
       headers: plugin?.imageRequestInit?.headers,
       method: plugin?.imageRequestInit?.method,
       body: plugin?.imageRequestInit?.body,
@@ -397,7 +408,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
                   : 'translateX(0%)'
               };
               ${chapterGeneralSettings.pageReader ? '' : 'display: none'}"
-              ">${chapter.name}</div>
+              ">${documentChapter.name}</div>
               <div id="LNReader-chapter">
                 ${processedHtml}
               </div>
@@ -413,16 +424,16 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
                   readerSettings: initialReaderSettings,
                   chapterGeneralSettings,
                   novel,
-                  chapter,
+                  chapter: documentChapter,
+                  canAppendChapters: true,
                   batteryLevel,
                   autoSaveInterval: 2222,
                   DEBUG: __DEV__,
                   strings: {
-                    finished:
-                      getString('readerScreen.finished') +
-                      ': ' +
-                      chapter.name.trim(),
+                    finished: finishedString(documentChapter),
                     noNextChapter: getString('readerScreen.noNextChapter'),
+                    loading: getString('common.loading'),
+                    retry: getString('common.retry'),
                     removeText: getString('common.remove'),
                     replaceText: getString('customCodeSettings.replace'),
                   },
@@ -444,13 +455,17 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
                 document.querySelector('#LNReader-chapter').innerHTML = html;
               }
               document.addEventListener('DOMContentLoaded', fn);
+              function lnApplyCustomJS(html){
+                ${customJS}
+                return html;
+              }
               </script>
           </html>
           `,
     };
   }, [
     batteryLevel,
-    chapter,
+    documentChapter,
     chapterGeneralSettings,
     processedHtml,
     customJS,
@@ -463,6 +478,61 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
     readerDir,
     theme,
   ]);
+
+  const sourceRef = useRef(source);
+  useEffect(() => {
+    if (sourceRef.current === source) {
+      return;
+    }
+    sourceRef.current = source;
+    pendingAppendsRef.current = new Set();
+    // A rebuilt page (e.g. after a theme change) only holds the document
+    // chapter, even if an appended chapter was being read.
+    if (chapter.id !== documentChapter.id) {
+      setActiveChapter(documentChapter.id);
+    }
+  }, [chapter.id, documentChapter.id, setActiveChapter, source]);
+
+  const appendNextChapter = (afterId: number) => {
+    const pending = pendingAppendsRef.current;
+    if (pending.has(afterId)) {
+      return;
+    }
+    pending.add(afterId);
+    const requestSource = sourceRef.current;
+    const inject = (script: string) => {
+      if (sourceRef.current === requestSource) {
+        webViewRef.current?.injectJavaScript(`${script}; true;`);
+      }
+    };
+    loadChapterAfter(afterId)
+      .then(result => {
+        if (!result) {
+          inject(`window.reader?.appendEnd?.(${afterId})`);
+          return;
+        }
+        const { removeText, replaceText } = readerSettingsRef.current;
+        inject(
+          `window.reader?.appendChapter?.(${JSON.stringify({
+            chapter: result.chapter,
+            html: applyTextModifications(
+              result.html,
+              removeText ?? [],
+              replaceText ?? {},
+            ),
+            strings: { finished: finishedString(result.chapter) },
+          })})`,
+        );
+      })
+      .catch((e: Error) => {
+        inject(
+          `window.reader?.appendFailed?.(${afterId}, ${JSON.stringify(
+            e?.message ?? '',
+          )})`,
+        );
+      })
+      .finally(() => pending.delete(afterId));
+  };
 
   return (
     <>
@@ -522,7 +592,11 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
           switch (event.type) {
             case 'tts-queue': {
               const payload = event.data as
-                | { queue?: unknown; startIndex?: unknown }
+                | {
+                    queue?: unknown;
+                    startIndex?: unknown;
+                    chapterName?: unknown;
+                  }
                 | undefined;
               const queue = Array.isArray(payload?.queue)
                 ? payload?.queue.filter(
@@ -539,7 +613,10 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
                 startIndex,
                 {
                   novelName: novel?.name || 'Unknown',
-                  chapterName: chapter.name,
+                  chapterName:
+                    typeof payload?.chapterName === 'string'
+                      ? payload.chapterName
+                      : chapter.name,
                   coverUri: novel?.cover || undefined,
                 },
                 toNativeTtsSettings(readerSettingsRef.current.tts),
@@ -592,7 +669,17 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
               break;
             case 'save':
               if (event.data && typeof event.data === 'number') {
-                saveProgress(event.data);
+                saveProgress(event.data, event.chapterId);
+              }
+              break;
+            case 'need-next':
+              if (typeof event.data === 'number') {
+                appendNextChapter(event.data);
+              }
+              break;
+            case 'active-chapter':
+              if (typeof event.data === 'number') {
+                setActiveChapter(event.data);
               }
               break;
             case 'text-action':
