@@ -26,6 +26,11 @@ class LNReaderTaskWorker(
         if (task.state == BackgroundTaskState.PAUSED) {
             return Result.success()
         }
+        // RUNNING with no live execution in this process means the process died
+        // mid-task: requeue it so it is claimed and run below.
+        if (task.state == BackgroundTaskState.RUNNING && !TaskExecutionRegistry.isActive(taskId)) {
+            dao.finishRunning(taskId, BackgroundTaskState.QUEUED, System.currentTimeMillis())
+        }
 
         val claimed = dao.tryMarkRunning(
             taskId,

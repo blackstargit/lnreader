@@ -201,7 +201,15 @@
     "selfHostDesc": "Backup to your server",
     "uploadingData": "Uploading Data",
     "uploadingSelectedFiles": "Uploading selected files",
-    "uploadingDownloadedFiles": "Uploading Downloaded Files"
+    "uploadingDownloadedFiles": "Uploading Downloaded Files",
+    "webnovelImport": {
+      "title": "Import WebNovel library",
+      "description": "Add the novels and reading progress from a saved WebNovel library page (.html)",
+      "pluginMissing": "Install the Webnovel plugin first",
+      "noNovelsFound": "No novels found in this file",
+      "summary": "Imported %{imported}, already in library %{existing}, comics skipped %{comics}, failed %{failed}",
+      "stopped": "Stopped after %{count} failures in a row; WebNovel may be blocking requests. Run the import again later."
+    }
   },
   "browse": "Browse",
   "browseScreen": {
@@ -800,6 +808,7 @@
     "LOCAL_BACKUP": "Local Backup",
     "LOCAL_RESTORE": "Local Restore",
     "MIGRATE_NOVEL": "Migrating Novel",
+    "IMPORT_WEBNOVEL": "Importing WebNovel library",
     "DOWNLOAD_CHAPTER": "Downloading Chapter",
     "taskQueued": "%{task} queued",
     "taskCompleted": "Completed",

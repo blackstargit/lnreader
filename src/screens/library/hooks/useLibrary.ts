@@ -285,7 +285,8 @@ export const useLibrary = (): UseLibraryReturnType => {
         return (
           taskName === 'LOCAL_RESTORE' ||
           taskName === 'DRIVE_RESTORE' ||
-          taskName === 'SELF_HOST_RESTORE'
+          taskName === 'SELF_HOST_RESTORE' ||
+          taskName === 'IMPORT_WEBNOVEL'
         );
       }).length || 0,
     [taskQueue],

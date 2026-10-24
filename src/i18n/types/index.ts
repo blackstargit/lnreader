@@ -175,6 +175,12 @@ export interface StringMap {
   'backupScreen.uploadingData': 'string';
   'backupScreen.uploadingSelectedFiles': 'string';
   'backupScreen.uploadingDownloadedFiles': 'string';
+  'backupScreen.webnovelImport.title': 'string';
+  'backupScreen.webnovelImport.description': 'string';
+  'backupScreen.webnovelImport.pluginMissing': 'string';
+  'backupScreen.webnovelImport.noNovelsFound': 'string';
+  'backupScreen.webnovelImport.summary': 'string';
+  'backupScreen.webnovelImport.stopped': 'string';
   'browse': 'string';
   'browseScreen.addedToLibrary': 'string';
   'browseScreen.available': 'string';
@@ -681,6 +687,7 @@ export interface StringMap {
   'notifications.LOCAL_BACKUP': 'string';
   'notifications.LOCAL_RESTORE': 'string';
   'notifications.MIGRATE_NOVEL': 'string';
+  'notifications.IMPORT_WEBNOVEL': 'string';
   'notifications.DOWNLOAD_CHAPTER': 'string';
   'notifications.taskQueued': 'string';
   'notifications.taskCompleted': 'string';

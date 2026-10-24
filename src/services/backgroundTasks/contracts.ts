@@ -39,6 +39,20 @@ export type MigrateNovelData = {
   options?: MigrationNovelOptions;
 };
 
+export type WebnovelLibraryEntry = {
+  bookId: string;
+  name: string;
+  /** webnovel.com id of the last-read chapter. */
+  chapterId?: string;
+  /** Chapters read ("Progress N/M"). */
+  readCount: number;
+};
+
+export type WebnovelImportData = {
+  novels: WebnovelLibraryEntry[];
+  comics: number;
+};
+
 export type EpubImportFile = {
   filename: string;
   uri: string;
@@ -79,6 +93,7 @@ export type BackgroundTask =
     }
   | { name: 'LOCAL_RESTORE'; data: { sourceUri: string } }
   | { name: 'MIGRATE_NOVEL'; data: MigrateNovelData }
+  | { name: 'IMPORT_WEBNOVEL'; data: WebnovelImportData }
   | DownloadChapterTask;
 
 export type DownloadChapterTask = {

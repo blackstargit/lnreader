@@ -6,6 +6,7 @@ import { exportEpub } from '../epub/export';
 import { importEpubBatch } from '../epub/import';
 import { migrateNovel } from '../migrate/migrateNovel';
 import { updateLibrary } from '../updates';
+import { importWebnovelLibrary } from '../webnovel/importLibrary';
 import { getMMKVObject, setMMKVObject } from '@utils/mmkv/mmkv';
 import type {
   BackgroundTask,
@@ -52,5 +53,7 @@ export const executeBackgroundTask = async (
       return migrateNovel(task.data, updateProgress, enqueue);
     case 'DOWNLOAD_CHAPTER':
       return downloadChapters(task.data, updateProgress, context);
+    case 'IMPORT_WEBNOVEL':
+      return importWebnovelLibrary(task.data, updateProgress);
   }
 };

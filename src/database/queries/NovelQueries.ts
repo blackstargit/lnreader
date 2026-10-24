@@ -252,6 +252,34 @@ export const switchNovelToLibraryQuery = async (
 };
 
 /**
+ * Idempotently puts an existing novel in the library (unlike the toggle above)
+ * with the configured default category. Shows no toast.
+ */
+export const addNovelToLibraryQuery = async (novelId: number) => {
+  await dbManager.write(async tx => {
+    await tx
+      .update(novelSchema)
+      .set({ inLibrary: true })
+      .where(eq(novelSchema.id, novelId))
+      .run();
+
+    const categories = await getCategoriesForNewNovel(tx);
+    if (categories.length) {
+      await tx
+        .insert(novelCategorySchema)
+        .values(
+          categories.map((category: { id: number }) => ({
+            novelId,
+            categoryId: category.id,
+          })),
+        )
+        .onConflictDoNothing()
+        .run();
+    }
+  });
+};
+
+/**
  * Removes multiple novels from the library and clears their categories.
  */
 export const removeNovelsFromLibrary = async (novelIds: number[]) => {

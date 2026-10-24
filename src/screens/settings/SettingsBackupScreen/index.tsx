@@ -25,6 +25,12 @@ import AutomaticBackupDialog, {
   AUTOMATIC_BACKUP_LABELS,
 } from './Components/AutomaticBackupDialog';
 import { showToast } from '@utils/showToast';
+import * as DocumentPicker from 'expo-document-picker';
+import { getPlugin } from '@plugins/pluginManager';
+import {
+  parseWebnovelLibrary,
+  WEBNOVEL_PLUGIN_ID,
+} from '@services/webnovel/importLibrary';
 
 const BackupSettings = ({ navigation }: BackupSettingsScreenProps) => {
   const theme = useTheme();
@@ -126,6 +132,36 @@ const BackupSettings = ({ navigation }: BackupSettingsScreenProps) => {
     }
   };
 
+  const importWebnovelLibrary = async () => {
+    if (!getPlugin(WEBNOVEL_PLUGIN_ID)) {
+      showToast(getString('backupScreen.webnovelImport.pluginMissing'));
+      return;
+    }
+    try {
+      const file = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: false,
+        type: 'text/html',
+      });
+      if (!file.assets) {
+        return;
+      }
+      const tempPath =
+        NativeFile.ExternalCachesDirectoryPath + '/webnovel_library.html';
+      await NativeFile.copyFile(file.assets[0].uri, tempPath);
+      const html = await NativeFile.readFile(tempPath);
+      await NativeFile.unlink(tempPath);
+
+      const data = parseWebnovelLibrary(html);
+      if (!data.novels.length) {
+        showToast(getString('backupScreen.webnovelImport.noNovelsFound'));
+        return;
+      }
+      backgroundTasks.enqueue({ name: 'IMPORT_WEBNOVEL', data });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const {
     value: selfHostModalVisible,
     setFalse: closeSelfHostModal,
@@ -170,6 +206,12 @@ const BackupSettings = ({ navigation }: BackupSettingsScreenProps) => {
             title={getString('backupScreen.restoreBackup')}
             description={getString('backupScreen.restoreBackupDesc')}
             onPress={restoreLocalBackup}
+            theme={theme}
+          />
+          <List.Item
+            title={getString('backupScreen.webnovelImport.title')}
+            description={getString('backupScreen.webnovelImport.description')}
+            onPress={importWebnovelLibrary}
             theme={theme}
           />
           <List.Item
