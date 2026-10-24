@@ -415,6 +415,9 @@ export default function useChapter(
       if (!chap || chap.id === chapterRef.current.id) {
         return;
       }
+      // Synchronously, so a fast A→B→A flip isn't skipped and the history
+      // effect's cleanup can tell the old chapter was scrolled away from.
+      chapterRef.current = chap;
       setChapter(chap);
       setAdjacentChapter(NO_ADJACENT_CHAPTERS);
       void resolveAdjacentChapters(chap);
@@ -529,6 +532,15 @@ export default function useChapter(
       if (!incognitoMode) {
         updateChapterProgress(chapterId, percentage > 100 ? 100 : percentage);
 
+        // The reading position is wherever the reader is now, not the furthest
+        // chapter reached: with continuous chapters the user may scroll several
+        // chapters ahead and come back. Saves for chapters scrolled past don't
+        // count.
+        if (chapterId === chapterRef.current.id) {
+          insertHistory(chapterId);
+          setLastRead({ ...chapterRef.current, progress: percentage });
+        }
+
         // Progress is reported repeatedly while reading the end of a chapter;
         // marking it read (and pushing it to the tracker, which is a network
         // call) only has to happen once.
@@ -547,6 +559,7 @@ export default function useChapter(
       chapter.name,
       incognitoMode,
       markChapterRead,
+      setLastRead,
       updateChapterProgress,
       updateTracker,
     ],
@@ -603,10 +616,18 @@ export default function useChapter(
 
     return () => {
       cancel();
+      // Scrolled away to another chapter of the same document: that chapter is
+      // the position now, and a late write here would overwrite it.
+      if (chapterRef.current.id !== chapterId) {
+        return;
+      }
       if (!started) {
         insertHistory(chapterId);
       }
-      getDbChapter(chapterId).then(result => result && setLastRead(result));
+      getDbChapter(chapterId).then(
+        result =>
+          result && chapterRef.current.id === chapterId && setLastRead(result),
+      );
     };
   }, [incognitoMode, setLastRead, chapter.id]);
 

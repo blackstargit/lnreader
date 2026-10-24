@@ -480,6 +480,39 @@ describe('useChapter', () => {
     );
   });
 
+  it('tracks the chapter being read as the position, not the furthest one reached', async () => {
+    const store = createStore({
+      [initialChapter.id]: 'initial body',
+      [nextChapter.id]: 'next body',
+    });
+    mockUseNovelActions.mockReturnValue(store.state);
+    mockGetNextChapter.mockImplementation(
+      async (_novelId: number, position: number) =>
+        position === initialChapter.position ? nextChapter : undefined,
+    );
+
+    const { result } = renderHook(() => useFlatChapter(initialChapter));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => {
+      await result.current.loadChapterBeside(initialChapter.id, 'NEXT');
+    });
+
+    act(() => result.current.setActiveChapter(nextChapter.id));
+    act(() => result.current.saveProgress(40, nextChapter.id));
+    act(() => result.current.setActiveChapter(initialChapter.id));
+    store.state.setLastRead.mockClear();
+    act(() => {
+      // A late save for the chapter scrolled away from must not move the position.
+      result.current.saveProgress(100, nextChapter.id);
+      result.current.saveProgress(77, initialChapter.id);
+    });
+
+    expect(store.state.setLastRead).toHaveBeenCalledTimes(1);
+    expect(store.state.setLastRead).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: initialChapter.id, progress: 77 }),
+    );
+  });
+
   it('surfaces a failed page fetch when loading the previous chapter so it can be retried', async () => {
     const pageStart = makeChapter(1, '2');
     const store = createStore({ [pageStart.id]: 'initial body' });
