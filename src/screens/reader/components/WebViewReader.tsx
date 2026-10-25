@@ -28,6 +28,7 @@ import { showToast } from '@utils/showToast';
 import { useChapterContext } from '../ChapterContext';
 import { ReaderSearchResult } from '../types';
 import { useTtsSession } from '../hooks/useTtsSession';
+import { useBackgroundTtsAdvance } from '../hooks/useBackgroundTtsAdvance';
 import type { TtsSettings } from '@modules/nitro-tts';
 import { ChapterInfo } from '@database/types';
 import { Dialog } from '@components/Dialog';
@@ -152,6 +153,8 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
     isTTSReadingRef,
     refetch,
     loadChapterBeside,
+    advanceTtsChapter,
+    getChapter,
     setActiveChapter,
   } = useChapterContext();
   const theme = useTheme();
@@ -218,38 +221,73 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
     readerSettingsRef.current = readerSettings;
   }, [readerSettings]);
 
+  const backgroundTts = useBackgroundTtsAdvance({
+    webViewRef,
+    readerSettingsRef,
+    ttsState,
+    ttsProgress,
+    documentChapterId: documentChapter.id,
+    advanceTtsChapter,
+    getChapter,
+    play: (queue, nextChapterToRead) =>
+      loadAndPlay(
+        queue,
+        0,
+        {
+          novelName: novel?.name || 'Unknown',
+          chapterName: nextChapterToRead.name,
+          coverUri: novel?.cover || undefined,
+        },
+        toNativeTtsSettings(readerSettingsRef.current.tts),
+      ),
+  });
+
   useEffect(() => {
     isTTSReadingRef.current = ttsState === 'playing';
+    if (ttsState === 'idle' || ttsState === 'error') {
+      backgroundTts.onStopped();
+    }
+    if (backgroundTts.isDetached()) {
+      if (ttsState === 'completed') {
+        backgroundTts.onCompleted();
+      }
+      return;
+    }
     webViewRef.current?.injectJavaScript(`
       window.tts?.setPlaybackState?.(${JSON.stringify(ttsState)});
       true;
     `);
-    if (ttsState === 'completed') {
+    if (ttsState === 'completed' && !backgroundTts.onCompleted()) {
       webViewRef.current?.injectJavaScript('window.tts?.complete?.(); true;');
     }
-  }, [isTTSReadingRef, ttsState, webViewRef]);
+  }, [backgroundTts, isTTSReadingRef, ttsState, webViewRef]);
 
   useEffect(() => {
-    if (ttsProgress.total > 0) {
+    if (ttsProgress.total > 0 && !backgroundTts.isDetached()) {
       webViewRef.current?.injectJavaScript(`
         window.tts?.setActiveIndex?.(${ttsProgress.index});
         true;
       `);
     }
-  }, [ttsProgress, webViewRef]);
+  }, [backgroundTts, ttsProgress, webViewRef]);
 
   // Keyed on the document: in continuous mode the active chapter changes while
   // TTS reads on into the next chapter of the same document.
   useEffect(() => {
     if (documentChapterIdRef.current !== documentChapter.id) {
       documentChapterIdRef.current = documentChapter.id;
+      // Attaching: the page is being brought to the chapter TTS reads.
+      if (backgroundTts.isAttachingTo(documentChapter.id)) {
+        return;
+      }
+      backgroundTts.cancel();
       // Auto-advancing: native load() replaces the queue, and stopping here would
       // release audio focus and the service mid-handover.
       if (!autoStartTTSRef.current) {
         runTtsCommand('stop');
       }
     }
-  }, [documentChapter.id, runTtsCommand]);
+  }, [backgroundTts, documentChapter.id, runTtsCommand]);
 
   useEffect(() => {
     if (ttsError) {
@@ -584,6 +622,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
             );
           }
 
+          backgroundTts.onLoadEnd();
           if (autoStartTTSRef.current) {
             autoStartTTSRef.current = false;
             setTimeout(() => {
@@ -604,6 +643,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
                     queue?: unknown;
                     startIndex?: unknown;
                     chapterName?: unknown;
+                    chapterId?: unknown;
                   }
                 | undefined;
               const queue = Array.isArray(payload?.queue)
@@ -616,6 +656,11 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
                 typeof payload?.startIndex === 'number'
                   ? payload.startIndex
                   : 0;
+              backgroundTts.setQueueChapter(
+                typeof payload?.chapterId === 'number'
+                  ? payload.chapterId
+                  : chapter.id,
+              );
               void loadAndPlay(
                 queue,
                 startIndex,
@@ -676,6 +721,10 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
               navigateChapter('PREV');
               break;
             case 'save':
+              // While TTS is ahead of the page, the page's position is stale.
+              if (backgroundTts.isDetached()) {
+                break;
+              }
               if (event.data && typeof event.data === 'number') {
                 saveProgress(event.data, event.chapterId);
               }
@@ -691,7 +740,10 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
               }
               break;
             case 'active-chapter':
-              if (typeof event.data === 'number') {
+              if (
+                typeof event.data === 'number' &&
+                !backgroundTts.isDetached()
+              ) {
                 setActiveChapter(event.data);
               }
               break;

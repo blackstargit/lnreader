@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -53,6 +54,8 @@ internal object TtsPlaybackStore {
     private const val SENTENCE_LEAD_MS = 30
     private const val MAX_PAUSE_MS = 5000
     private const val IDLE_RELEASE_MS = 30_000L
+    /** A bind that hasn't called back by then is retried instead of waited on. */
+    private const val BIND_TIMEOUT_MS = 10_000L
     private const val TAG = "nitrotts"
 
     private data class Chunk(val paragraph: Int, val text: String)
@@ -90,6 +93,11 @@ internal object TtsPlaybackStore {
     private var pausedInPlace = false
     /** Set while recovering from a dead engine binding, so a real rejection still fails. */
     private var rebinding = false
+    /** Chunk [recoverPlayer] last restarted, so a second player error on it fails instead. */
+    private var recoveredChunk = -1
+    /** Identifies the latest [bindEngine], so a superseded engine's late callback is ignored. */
+    private var bindGeneration = 0L
+    private var bindStartedAt = 0L
     private var metadata: TtsMetadata? = null
     private var settings = TtsSettings(null, null, 1.0, 1.0, 200.0, 400.0)
     private var state = TtsPlaybackState.IDLE
@@ -200,6 +208,8 @@ internal object TtsPlaybackStore {
     private fun bindEngine(engineName: String?) {
         val context = checkNotNull(applicationContext)
         isReady = false
+        val bind = ++bindGeneration
+        bindStartedAt = SystemClock.elapsedRealtime()
         engine?.stop()
         engine?.shutdown()
         engine = null
@@ -212,6 +222,7 @@ internal object TtsPlaybackStore {
 
         val listener = TextToSpeech.OnInitListener { status ->
             runOnOwner {
+                if (bind != bindGeneration) return@runOnOwner
                 if (status == TextToSpeech.SUCCESS) {
                     isReady = true
                     boundEngineName = engineName
@@ -240,11 +251,14 @@ internal object TtsPlaybackStore {
         nextMetadata: TtsMetadata,
         nextSettings: TtsSettings,
     ) {
-        requireReady()
         require(nextParagraphs.isNotEmpty()) { "The TTS queue cannot be empty." }
         ownerHandler.removeCallbacks(idleRelease)
         // Start first so a failure rejects the promise without leaving a half-loaded queue.
-        TtsPlaybackService.start(checkNotNull(applicationContext))
+        // Not when it is already running: a chapter loaded from the background (screen off)
+        // would need a background foreground-service start, which Android 12+ refuses.
+        if (!TtsPlaybackService.isRunning) {
+            TtsPlaybackService.start(checkNotNull(applicationContext))
+        }
 
         halt()
         paragraphs = nextParagraphs.filter { it.text.isNotBlank() }
@@ -259,6 +273,7 @@ internal object TtsPlaybackStore {
         require(chunks.isNotEmpty()) { "The TTS queue contains no readable paragraphs." }
         currentIndex = initialIndex.coerceIn(paragraphs.indices)
         playChunk = firstChunkOf(currentIndex)
+        recoveredChunk = -1
         metadata = nextMetadata
         settings = nextSettings
         state = TtsPlaybackState.PAUSED
@@ -268,7 +283,6 @@ internal object TtsPlaybackStore {
     }
 
     fun play() {
-        requireReady()
         check(paragraphs.isNotEmpty()) { "Load a paragraph queue before starting TTS." }
         Log.i(TAG, "play: index=$currentIndex, pausedInPlace=$pausedInPlace")
         if (pausedInPlace) {
@@ -459,7 +473,6 @@ internal object TtsPlaybackStore {
     }
 
     fun updateSettings(nextSettings: TtsSettings) {
-        requireReady()
         // The reader sends this on any reader-setting change; don't restart for no-ops.
         if (nextSettings == settings) return
         val pausesOnly = nextSettings.copy(
@@ -511,14 +524,18 @@ internal object TtsPlaybackStore {
 
     private fun speakFrom(chunkIndex: Int) {
         ownerHandler.removeCallbacks(idleRelease)
-        if (settings.engineName != boundEngineName || (!usingEdge() && engine == null)) {
+        // !isReady: a bind is in flight, or the last one failed (e.g. a rebind after the engine
+        // was killed during a long pause); binding again here recovers instead of staying stuck.
+        if (!isReady || settings.engineName != boundEngineName || (!usingEdge() && engine == null)) {
+            val bindInFlight = pendingInitialization.isNotEmpty() &&
+                SystemClock.elapsedRealtime() - bindStartedAt < BIND_TIMEOUT_MS
             pendingInitialization.add { result ->
                 result.fold(
                     onSuccess = { speakFrom(chunkIndex) },
                     onFailure = { fail("The selected text-to-speech engine failed to initialize.") },
                 )
             }
-            bindEngine(settings.engineName)
+            if (!bindInFlight) bindEngine(settings.engineName)
             return
         }
 
@@ -696,11 +713,39 @@ internal object TtsPlaybackStore {
             prepared.setOnCompletionListener {
                 if (queueGeneration == generation) onChunkFinished(file)
             }
+            prepared.setOnErrorListener { _, what, extra ->
+                Log.e(TAG, "player error: chunk=$index, what=$what, extra=$extra")
+                if (queueGeneration == generation) recoverPlayer(index, what, extra)
+                // Handled: unhandled errors call the completion listener, skipping the chunk.
+                true
+            }
             prepared
         } catch (cause: Exception) {
             prepared.release()
             null
         }
+    }
+
+    /**
+     * A player died, e.g. the media server restarted during a long pause: re-synthesize from the
+     * current chunk (on the next play() if paused). Once per chunk, so a bad chunk can't loop.
+     * The chained next player is only dropped: [onChunkFinished] then prepares a fresh one.
+     */
+    private fun recoverPlayer(index: Int, what: Int, extra: Int) {
+        if (index != playChunk) {
+            if (index == playChunk + 1 && nextPlayer != null) {
+                player?.setNextMediaPlayer(null)
+                nextPlayer?.release()
+                nextPlayer = null
+            }
+            return
+        }
+        if (recoveredChunk == playChunk) {
+            fail("Audio playback failed (MediaPlayer error $what, $extra).")
+            return
+        }
+        recoveredChunk = playChunk
+        if (state == TtsPlaybackState.PLAYING) speakFrom(playChunk) else halt()
     }
 
     /** Hands the next chunk's player to the current one, so Android starts it with no gap. */
@@ -840,10 +885,6 @@ internal object TtsPlaybackStore {
         val callbacks = pendingInitialization.toList()
         pendingInitialization.clear()
         callbacks.forEach { it(result) }
-    }
-
-    private fun requireReady() {
-        check(isReady) { "The text-to-speech engine is not ready." }
     }
 
     private fun runOnOwner(operation: () -> Unit) {

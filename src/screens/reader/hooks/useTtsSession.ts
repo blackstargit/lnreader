@@ -53,13 +53,16 @@ export const useTtsSession = () => {
     return sessionPromiseRef.current;
   }, []);
 
+  /** Resolves to whether `operation` succeeded; failures are surfaced as `error`. */
   const run = useCallback(
     async (operation: (session: TtsSession) => Promise<void>) => {
       try {
         setError(null);
         await operation(await ensureSession());
+        return true;
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
+        return false;
       }
     },
     [ensureSession],
@@ -74,9 +77,9 @@ export const useTtsSession = () => {
     ) => {
       if (queue.length === 0) {
         setError('No readable paragraphs were found in this chapter.');
-        return;
+        return false;
       }
-      await run(async session => {
+      return run(async session => {
         await session.load(
           queue.map((text, index) => ({ id: String(index), text })),
           startIndex,

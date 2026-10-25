@@ -513,6 +513,58 @@ describe('useChapter', () => {
     );
   });
 
+  it('advances TTS through several chapters without rebuilding the document', async () => {
+    const thirdChapter = makeChapter(3, '1');
+    const chapters = [initialChapter, nextChapter, thirdChapter];
+    const store = createStore({
+      [initialChapter.id]: 'initial body',
+      [nextChapter.id]: 'next body',
+      [thirdChapter.id]: 'third body',
+    });
+    mockUseNovelActions.mockReturnValue(store.state);
+    mockGetNextChapter.mockImplementation(
+      async (_novelId: number, position: number) =>
+        chapters.find(chap => chap.position === position + 1),
+    );
+    mockGetDbChapter.mockImplementation(async (id: number) =>
+      chapters.find(chap => chap.id === id),
+    );
+
+    const { result } = renderHook(() => useFlatChapter(initialChapter));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let advanced: Awaited<ReturnType<typeof result.current.advanceTtsChapter>>;
+    await act(async () => {
+      advanced = await result.current.advanceTtsChapter(initialChapter.id);
+    });
+    expect(advanced!).toEqual({ chapter: nextChapter, html: 'next body' });
+    await act(async () => {
+      advanced = await result.current.advanceTtsChapter(nextChapter.id);
+    });
+    expect(advanced!).toEqual({ chapter: thirdChapter, html: 'third body' });
+
+    expect(result.current.chapter.id).toBe(thirdChapter.id);
+    expect(result.current.documentChapter.id).toBe(initialChapter.id);
+    expect(store.state.updateChapterProgress).toHaveBeenCalledWith(
+      initialChapter.id,
+      100,
+    );
+    expect(store.state.markChapterRead).toHaveBeenCalledWith(initialChapter.id);
+    expect(store.state.markChapterRead).toHaveBeenCalledWith(nextChapter.id);
+    expect(mockInsertHistory).toHaveBeenCalledWith(thirdChapter.id);
+    await waitFor(() =>
+      expect(store.state.setLastRead).toHaveBeenLastCalledWith(
+        expect.objectContaining({ id: thirdChapter.id }),
+      ),
+    );
+
+    await act(async () => {
+      advanced = await result.current.advanceTtsChapter(thirdChapter.id);
+    });
+    expect(advanced!).toBeUndefined();
+    expect(result.current.chapter.id).toBe(thirdChapter.id);
+  });
+
   it('surfaces a failed page fetch when loading the previous chapter so it can be retried', async () => {
     const pageStart = makeChapter(1, '2');
     const store = createStore({ [pageStart.id]: 'initial body' });

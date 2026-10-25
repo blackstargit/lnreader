@@ -447,7 +447,7 @@ export default function useChapter(
           htmlPromise,
         ]);
         if (isStale()) {
-          return;
+          return false;
         }
 
         const chap = dbChapter ?? requested;
@@ -459,12 +459,13 @@ export default function useChapter(
         setLoading(false);
 
         void resolveAdjacentChapters(chap);
+        return true;
       } catch (e: any) {
-        if (isStale()) {
-          return;
+        if (!isStale()) {
+          setError(e.message);
+          setLoading(false);
         }
-        setError(e.message);
-        setLoading(false);
+        return false;
       }
     },
     [loadChapterHtml, resolveAdjacentChapters],
@@ -562,6 +563,42 @@ export default function useChapter(
       setLastRead,
       updateChapterProgress,
       updateTracker,
+    ],
+  );
+
+  /**
+   * Moves the reading position on to the chapter after `chapterId` for TTS
+   * that continues while the app is in the background, where the WebView can't
+   * load it: marks `chapterId` read and makes the next chapter the active one.
+   * Resolves to undefined when there is no next chapter.
+   */
+  const advanceTtsChapter = useCallback(
+    async (chapterId: number) => {
+      const result = await loadChapterBeside(chapterId, 'NEXT');
+      if (!result) {
+        return undefined;
+      }
+      saveProgress(100, chapterId);
+      setActiveChapter(result.chapter.id);
+      if (!incognitoMode) {
+        // The history effect defers these to an idle callback, which doesn't
+        // run while the app is in the background.
+        insertHistory(result.chapter.id);
+        getDbChapter(result.chapter.id)
+          .then(
+            fresh =>
+              fresh && chapterRef.current.id === fresh.id && setLastRead(fresh),
+          )
+          .catch(() => {});
+      }
+      return result;
+    },
+    [
+      incognitoMode,
+      loadChapterBeside,
+      saveProgress,
+      setActiveChapter,
+      setLastRead,
     ],
   );
 
@@ -673,6 +710,7 @@ export default function useChapter(
       setLoading,
       getChapter,
       loadChapterBeside,
+      advanceTtsChapter,
       setActiveChapter,
       onUserInteraction,
       isTTSReadingRef,
@@ -694,6 +732,7 @@ export default function useChapter(
       refetch,
       getChapter,
       loadChapterBeside,
+      advanceTtsChapter,
       setActiveChapter,
       onUserInteraction,
       isTTSReadingRef,

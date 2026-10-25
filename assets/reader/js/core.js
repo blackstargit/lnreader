@@ -225,6 +225,8 @@ window.tts = new (function () {
   this.totalElements = 0;
   this.allReadableElements = []; // Store all readable elements at start
   this.textQueue = []; // Flat list of normalized text for native fallback
+  // Native queue index -> page index, while attached to a queue the app built.
+  this.indexMap = null;
 
   this.readable = element => {
     const ele = element ?? this.currentElement;
@@ -332,13 +334,25 @@ window.tts = new (function () {
     }
   };
 
+  /**
+   * Reloads the queue at `index` when native TTS has dropped it (stopped from the
+   * notification or media controls) while this page still shows it started;
+   * native play/seek would throw on the empty queue.
+   */
+  this.restartIfDropped = index => {
+    if (this.nativeState !== 'idle') return false;
+    const target = Math.max(0, Math.min(index, this.totalElements - 1));
+    this.start(this.allReadableElements[target], this.root);
+    return true;
+  };
+
   this.next = () => {
-    if (!this.started) return;
+    if (!this.started || this.restartIfDropped(this.elementsRead)) return;
     reader.post({ type: 'tts-command', data: { command: 'next' } });
   };
 
   this.previous = () => {
-    if (!this.started) return;
+    if (!this.started || this.restartIfDropped(this.elementsRead - 2)) return;
     reader.post({ type: 'tts-command', data: { command: 'previous' } });
   };
 
@@ -350,12 +364,8 @@ window.tts = new (function () {
     const startElement = element ?? root;
     this.root = root;
 
-    const readableEntries = this.getAllReadableElements(root)
-      .map(readableElement => ({
-        element: readableElement,
-        text: this.normalizeText(readableElement.innerText),
-      }))
-      .filter(entry => !!entry.text);
+    const readableEntries = this.readableEntries(root);
+    this.indexMap = null;
     this.allReadableElements = readableEntries.map(entry => entry.element);
     this.totalElements = this.allReadableElements.length;
     this.textQueue = readableEntries.map(entry => entry.text);
@@ -368,6 +378,7 @@ window.tts = new (function () {
 
     this.started = this.totalElements > 0;
     this.reading = this.started;
+    this.nativeState = undefined;
     this.setActiveIndex(startIndex);
     reader.post({
       type: 'tts-queue',
@@ -375,8 +386,79 @@ window.tts = new (function () {
         queue: this.textQueue,
         startIndex,
         chapterName: root.lnChapter?.name,
+        chapterId: root.lnChapter?.id,
       },
     });
+  };
+
+  this.readableEntries = root =>
+    this.getAllReadableElements(root)
+      .map(readableElement => ({
+        element: readableElement,
+        text: this.normalizeText(readableElement.innerText),
+      }))
+      .filter(entry => !!entry.text);
+
+  /**
+   * Maps native queue indexes to page paragraph indexes by matching texts in
+   * order, each within a few paragraphs of the last match, so a repeated line
+   * ("***") can't pin everything after it. When too few match (custom code
+   * rewrote the text), falls back to the same relative position.
+   */
+  this.mapQueue = (queue, pageTexts) => {
+    const reach = 8;
+    let last = -1;
+    let matched = 0;
+    const map = queue.map(text => {
+      const end = Math.min(pageTexts.length, last + 1 + reach);
+      for (let i = last + 1; i < end; i++) {
+        if (pageTexts[i] === text) {
+          last = i;
+          matched++;
+          return i;
+        }
+      }
+      return Math.min(last + 1, pageTexts.length - 1);
+    });
+    if (matched >= queue.length / 2) {
+      return map;
+    }
+    return queue.map((_, i) =>
+      Math.min(
+        pageTexts.length - 1,
+        Math.round((i * pageTexts.length) / queue.length),
+      ),
+    );
+  };
+
+  /**
+   * Attaches to a queue native TTS is already playing, which the app loaded
+   * while it was in the background and couldn't update this page, without
+   * posting it again. Its paragraphs are matched to the page's by text, in case
+   * the page splits the chapter differently (text options, custom code).
+   */
+  this.attach = (queue, index, state, chapterId) => {
+    // In continuous mode a chapter may already have been appended after it.
+    const root =
+      reader.chapterContainers().find(el => el.lnChapter?.id === chapterId) ??
+      reader.chapterElement;
+    const entries = this.readableEntries(root);
+    this.root = root;
+    this.allReadableElements = entries.map(entry => entry.element);
+    this.totalElements = entries.length;
+    this.textQueue = queue;
+    this.indexMap = this.mapQueue(
+      queue,
+      entries.map(entry => entry.text),
+    );
+    this.started = this.totalElements > 0;
+    if (this.started) {
+      this.setActiveIndex(index);
+    }
+    this.setPlaybackState(state);
+    if (state === 'completed') {
+      this.complete();
+    }
   };
 
   // Get all readable elements in order
@@ -399,7 +481,7 @@ window.tts = new (function () {
   };
 
   this.resume = () => {
-    if (!this.started) return;
+    if (!this.started || this.restartIfDropped(this.elementsRead - 1)) return;
     reader.post({ type: 'tts-command', data: { command: 'play' } });
   };
 
@@ -416,9 +498,17 @@ window.tts = new (function () {
   this.seekTo = index => {
     if (!this.started || !this.allReadableElements.length) return;
     const targetIndex = Math.max(0, Math.min(index, this.totalElements - 1));
+    if (this.restartIfDropped(targetIndex)) return;
+    // Native indexes its own queue; map back when attached to one (see attach).
+    const queueIndex = this.indexMap
+      ? this.indexMap.findIndex(pageIndex => pageIndex >= targetIndex)
+      : targetIndex;
     reader.post({
       type: 'tts-command',
-      data: { command: 'seekTo', index: targetIndex },
+      data: {
+        command: 'seekTo',
+        index: queueIndex < 0 ? this.indexMap.length - 1 : queueIndex,
+      },
     });
   };
 
@@ -437,15 +527,21 @@ window.tts = new (function () {
     this.totalElements = 0;
     this.allReadableElements = [];
     this.textQueue = [];
+    this.indexMap = null;
     const playPauseButton = document.getElementById('TTS-PlayPause');
     if (playPauseButton) playPauseButton.innerHTML = resumeIcon;
     const progress = document.getElementById('TTS-Progress');
     if (progress) progress.textContent = '';
   };
 
+  /** `index` is native's queue index, which differs from the page's after attach. */
   this.setActiveIndex = index => {
     if (!this.allReadableElements.length) return;
-    const targetIndex = Math.max(0, Math.min(index, this.totalElements - 1));
+    const pageIndex = this.indexMap?.[index] ?? index;
+    const targetIndex = Math.max(
+      0,
+      Math.min(pageIndex, this.totalElements - 1),
+    );
     this.currentElement?.classList?.remove('highlight');
     this.currentElement = this.allReadableElements[targetIndex];
     this.elementsRead = targetIndex + 1;
@@ -459,6 +555,7 @@ window.tts = new (function () {
   };
 
   this.setPlaybackState = state => {
+    this.nativeState = state;
     this.reading = state === 'playing';
     if (state === 'error') {
       this.reset();

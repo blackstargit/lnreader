@@ -28,6 +28,7 @@ internal class TtsPlaybackService : Service() {
         removeSnapshotListener = TtsPlaybackStore.addSnapshotListener(
             mediaNotification::notify,
         )
+        isRunning = true
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -42,6 +43,7 @@ internal class TtsPlaybackService : Service() {
     }
 
     override fun onDestroy() {
+        isRunning = false
         removeSnapshotListener?.invoke()
         removeSnapshotListener = null
         mediaNotification.release()
@@ -58,12 +60,18 @@ internal class TtsPlaybackService : Service() {
         internal const val ACTION_PREVIOUS = "com.lnreader.TTS_PREVIOUS"
         internal const val ACTION_NEXT = "com.lnreader.TTS_NEXT"
 
+        /** Created and in the foreground; main thread only. */
+        var isRunning = false
+            private set
+
         fun start(context: Context) {
             val intent = Intent(context, TtsPlaybackService::class.java)
             ContextCompat.startForegroundService(context, intent)
         }
 
         fun stop(context: Context) {
+            // Destroyed asynchronously; a load() in the meantime must start it again.
+            isRunning = false
             context.stopService(Intent(context, TtsPlaybackService::class.java))
         }
 
