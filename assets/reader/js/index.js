@@ -219,6 +219,11 @@ const ToolWrapper = () => {
       class: () =>
         `${reader.hidden.val ? 'hidden' : ''} ${
           horizontal.val ? 'horizontal' : ''
+        } ${
+          reader.generalSettings.val.TTSEnable &&
+          reader.generalSettings.val.TTSDockedControls
+            ? 'tts-docked'
+            : ''
         }`,
     },
     Scrollbar(),
@@ -550,6 +555,11 @@ const TTSController = () => {
     }
   };
 
+  // Docked mode: the app draws the controls above its bottom bar instead.
+  const floatingVisible = () =>
+    reader.generalSettings.val.TTSEnable &&
+    !reader.generalSettings.val.TTSDockedControls;
+
   collapseButtonElement = button({
     type: 'button',
     class: 'tts-collapse-toggle',
@@ -566,14 +576,11 @@ const TTSController = () => {
     {
       id: 'TTS-Controller',
       class: () =>
-        [
-          reader.generalSettings.val.TTSEnable ? '' : 'hidden',
-          collapsed.val ? 'collapsed' : '',
-        ]
+        [floatingVisible() ? '' : 'hidden', collapsed.val ? 'collapsed' : '']
           .filter(Boolean)
           .join(' '),
       style: () =>
-        reader.generalSettings.val.TTSEnable
+        floatingVisible()
           ? 'pointer-events: auto;'
           : 'pointer-events: none; display: none !important; opacity: 0; transition: none;',
       onclick: e => e.stopPropagation(),

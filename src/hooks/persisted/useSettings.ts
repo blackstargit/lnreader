@@ -195,6 +195,7 @@ export interface ChapterGeneralSettings {
   bionicReading: boolean;
   tapToScroll: boolean;
   TTSEnable: boolean;
+  TTSDockedControls: boolean;
   pageReaderInvertVolumeButtons: boolean;
   pageReaderDisableAnimation: boolean;
 }
@@ -326,6 +327,7 @@ export const initialChapterGeneralSettings: ChapterGeneralSettings = {
   bionicReading: false,
   tapToScroll: false,
   TTSEnable: true,
+  TTSDockedControls: false,
   pageReaderInvertVolumeButtons: false,
   pageReaderDisableAnimation: false,
 };

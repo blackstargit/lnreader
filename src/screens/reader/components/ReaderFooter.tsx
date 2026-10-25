@@ -10,11 +10,14 @@ import Animated, {
 import { useChapterContext } from '../ChapterContext';
 import { useTheme } from '@hooks/persisted';
 import { useNovelLayout } from '@screens/novel/NovelContext';
+import TtsDockedBar, { TTS_DOCKED_BAR_HEIGHT, TtsStatus } from './TtsDockedBar';
 
 interface ChapterFooterProps {
   openReaderSheet: () => void;
   scrollToStart: () => void;
   openDrawer: () => void;
+  /** Set in docked TTS mode: the TTS bar is drawn above the buttons. */
+  ttsStatus?: TtsStatus;
 }
 
 const fastOutSlowIn = Easing.bezier(0.4, 0.0, 0.2, 1.0);
@@ -65,8 +68,10 @@ const ChapterFooter = ({
   openReaderSheet,
   scrollToStart,
   openDrawer,
+  ttsStatus,
 }: ChapterFooterProps) => {
-  const { nextChapter, prevChapter, navigateChapter } = useChapterContext();
+  const { nextChapter, prevChapter, navigateChapter, webViewRef } =
+    useChapterContext();
   const theme = useTheme();
   const rippleConfig = {
     color: theme.rippleColor,
@@ -85,21 +90,23 @@ const ChapterFooter = ({
     [theme.surface, navigationBarHeight],
   );
 
-  const entering = useMemo(
-    () => createEntering(navigationBarHeight),
-    [navigationBarHeight],
-  );
-  const exiting = useMemo(
-    () => createExiting(navigationBarHeight),
-    [navigationBarHeight],
-  );
+  const offset = navigationBarHeight + (ttsStatus ? TTS_DOCKED_BAR_HEIGHT : 0);
+  const entering = useMemo(() => createEntering(offset), [offset]);
+  const exiting = useMemo(() => createExiting(offset), [offset]);
 
   return (
     <Animated.View
       entering={entering}
       exiting={exiting}
+      // Lets TTS keep the paragraph it reads (or starts at) clear of the bar.
+      onLayout={e =>
+        webViewRef.current?.injectJavaScript(
+          `window.tts?.setChromeInsets?.({ bottom: ${e.nativeEvent.layout.height} }); true;`,
+        )
+      }
       style={[styles.footer, style]}
     >
+      {ttsStatus ? <TtsDockedBar {...ttsStatus} /> : null}
       <View style={styles.buttonsContainer}>
         <Pressable
           android_ripple={rippleConfig}

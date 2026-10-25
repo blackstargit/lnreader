@@ -52,7 +52,7 @@ const ReaderAppbar = ({
   openInBrowser,
   shareChapter,
 }: ReaderAppbarProps) => {
-  const { chapter, novel, refetch } = useChapterContext();
+  const { chapter, novel, refetch, webViewRef } = useChapterContext();
   const { statusBarHeight } = useNovelLayout();
   const [menuVisible, setMenuVisible] = useState(false);
 
@@ -104,6 +104,12 @@ const ReaderAppbar = ({
     <Animated.View
       entering={entering}
       exiting={exiting}
+      // Lets TTS keep the paragraph it reads (or starts at) clear of the bar.
+      onLayout={e =>
+        webViewRef.current?.injectJavaScript(
+          `window.tts?.setChromeInsets?.({ top: ${e.nativeEvent.layout.height} }); true;`,
+        )
+      }
       style={[
         styles.container,
         {

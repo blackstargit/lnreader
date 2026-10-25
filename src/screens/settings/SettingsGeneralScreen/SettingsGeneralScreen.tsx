@@ -1,7 +1,11 @@
 import { ScrollView, StyleSheet } from 'react-native';
 
 import { useBoolean } from '@hooks';
-import { useAppSettings, useTheme } from '@hooks/persisted';
+import {
+  useAppSettings,
+  useChapterGeneralSettings,
+  useTheme,
+} from '@hooks/persisted';
 import { Appbar, List, SafeAreaView } from '@components';
 import { getString } from '@i18n/translations';
 import { SettingsStackParamList } from '@navigators/types';
@@ -26,6 +30,11 @@ const GeneralSettings = ({ navigation }: GeneralSettingsProps) => {
     setAppSettings,
     timeTrackingEnabled,
   } = useAppSettings();
+  const {
+    TTSEnable = true,
+    TTSDockedControls = false,
+    setChapterGeneralSettings,
+  } = useChapterGeneralSettings();
 
   const downloadCooldownModal = useBoolean();
   const inactivityTimeoutModal = useBoolean();
@@ -100,6 +109,26 @@ const GeneralSettings = ({ navigation }: GeneralSettingsProps) => {
             }
             theme={theme}
           />
+          {TTSEnable ? (
+            <>
+              <List.SubHeader theme={theme}>
+                {getString('generalSettingsScreen.textToSpeech')}
+              </List.SubHeader>
+              <SettingSwitch
+                label={getString('generalSettingsScreen.ttsDockedControls')}
+                description={getString(
+                  'generalSettingsScreen.ttsDockedControlsDesc',
+                )}
+                value={TTSDockedControls}
+                onPress={() =>
+                  setChapterGeneralSettings({
+                    TTSDockedControls: !TTSDockedControls,
+                  })
+                }
+                theme={theme}
+              />
+            </>
+          ) : null}
         </List.Section>
       </ScrollView>
       <DownloadCooldownModal

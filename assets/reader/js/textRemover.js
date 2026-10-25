@@ -89,7 +89,13 @@ window.textRemover = new (function () {
         const avoidScrollbar = reader.generalSettings.val.verticalSeekbar
           ? 0
           : 42;
-        const avoidUI = !reader.hidden.val ? 46 + avoidScrollbar : 0;
+        // The app's docked TTS bar sits above its bottom bar.
+        const avoidTts =
+          reader.generalSettings.val.TTSEnable &&
+          reader.generalSettings.val.TTSDockedControls
+            ? 48
+            : 0;
+        const avoidUI = !reader.hidden.val ? 46 + avoidScrollbar + avoidTts : 0;
         topPosition = viewportHeight - bottomSafeArea - avoidUI - 4;
         ui.style.top = topPosition + 'px';
         ui.style.bottom = 'auto';

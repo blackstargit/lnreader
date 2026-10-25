@@ -67,6 +67,7 @@ export const initialChapterGeneralSettings = {
   bionicReading: false,
   tapToScroll: false,
   TTSEnable: true,
+  TTSDockedControls: false,
   pageReaderInvertVolumeButtons: false,
   pageReaderDisableAnimation: false,
 };

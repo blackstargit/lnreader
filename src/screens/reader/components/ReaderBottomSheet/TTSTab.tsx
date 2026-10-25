@@ -298,8 +298,11 @@ const EnginePickerModal: React.FC<EnginePickerModalProps> = ({
 
 const TTSTab: React.FC = () => {
   const theme = useTheme();
-  const { TTSEnable = true, setChapterGeneralSettings } =
-    useChapterGeneralSettings();
+  const {
+    TTSEnable = true,
+    TTSDockedControls = false,
+    setChapterGeneralSettings,
+  } = useChapterGeneralSettings();
 
   const { tts, setChapterReaderSettings } = useChapterReaderSettings();
   const [engines, setEngines] = useState<TtsEngine[]>([]);
@@ -362,6 +365,19 @@ const TTSTab: React.FC = () => {
 
           {TTSEnable ? (
             <>
+              <ReaderSheetPreferenceItem
+                label={getString('generalSettingsScreen.ttsDockedControls')}
+                description={getString(
+                  'generalSettingsScreen.ttsDockedControlsDesc',
+                )}
+                value={TTSDockedControls}
+                onPress={() =>
+                  setChapterGeneralSettings({
+                    TTSDockedControls: !TTSDockedControls,
+                  })
+                }
+                theme={theme}
+              />
               {engines.length > 0 ? (
                 <List.Item
                   title="Engine"

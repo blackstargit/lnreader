@@ -24,6 +24,17 @@
   }
 }
 
+/* Clears the app's docked TTS bar (48px) above its bottom bar. */
+#ToolWrapper.horizontal.tts-docked:not(.hidden) {
+  bottom: 168px;
+}
+
+@media only screen and (min-width: 500px) {
+  #ToolWrapper.horizontal.tts-docked:not(.hidden) {
+    bottom: 128px;
+  }
+}
+
 #ToolWrapper.hidden {
   opacity: 0;
   right: 0;

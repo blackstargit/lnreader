@@ -430,6 +430,9 @@
     "disableLoadingAnimationsDesc": "May improve performance on slower devices",
     "disableHapticFeedback": "Disable haptic feedback",
     "disableHapticFeedbackDescription": "Turn off vibrations for touch interactions.",
+    "textToSpeech": "Text to speech",
+    "ttsDockedControls": "Docked TTS controls",
+    "ttsDockedControlsDesc": "Show text-to-speech controls above the reader's bottom bar instead of the floating button",
     "chapterDownloadCooldown": "Chapter download cooldown",
     "chapterDownloadCooldownDesc": "Wait between sequential chapter downloads (seconds). Helps avoid source rate limits during batch downloads.",
     "chapterDownloadCooldownPlaceholder": "Cooldown in seconds (e.g. 1.5)",
@@ -654,6 +657,13 @@
     "updatedToast": "Updated %{name}"
   },
   "readerScreen": {
+    "ttsControls": {
+      "next": "Next paragraph",
+      "pause": "Pause text-to-speech",
+      "play": "Play text-to-speech",
+      "previous": "Previous paragraph",
+      "stop": "Stop text-to-speech"
+    },
     "bottomSheet": {
       "alignCenter": "Center",
       "alignJustify": "Justify",

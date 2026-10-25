@@ -5,6 +5,7 @@ import ReaderAppbar from './components/ReaderAppbar';
 import ReaderFooter from './components/ReaderFooter';
 
 import WebViewReader from './components/WebViewReader';
+import type { TtsStatus } from './components/TtsDockedBar';
 import ReaderBottomSheetV2 from './components/ReaderBottomSheet/ReaderBottomSheet';
 import ChapterDrawer from './components/ChapterDrawer';
 import ChapterLoadingScreen from './ChapterLoadingScreen/ChapterLoadingScreen';
@@ -136,7 +137,17 @@ export const ChapterContent = ({
   const hidden = useReaderChromeHidden();
   const readerSheetRef = useRef<BottomSheetModalMethods>(null);
   const theme = useTheme();
-  const { pageReader = false, keepScreenOn } = useChapterGeneralSettings();
+  const {
+    pageReader = false,
+    keepScreenOn,
+    TTSEnable = true,
+    TTSDockedControls = false,
+  } = useChapterGeneralSettings();
+  const ttsDocked = TTSEnable && TTSDockedControls;
+  const [ttsStatus, setTtsStatus] = useState<TtsStatus>({
+    state: 'idle',
+    progress: { index: 0, total: 0, paragraphId: '' },
+  });
   const [bookmarked, setBookmarked] = useState<boolean>(
     chapter.bookmark ?? false,
   );
@@ -310,6 +321,7 @@ export const ChapterContent = ({
           onTouchStart={handleReaderTouchStart}
           onSearchResult={setSearchResult}
           searchTextRef={searchTextRef}
+          onTtsStatusChange={ttsDocked ? setTtsStatus : undefined}
         />
       )}
       {readerSheetMounted ? (
@@ -338,6 +350,7 @@ export const ChapterContent = ({
               openReaderSheet={openReaderSheet}
               scrollToStart={scrollToStart}
               openDrawer={openDrawerI}
+              ttsStatus={ttsDocked ? ttsStatus : undefined}
             />
           ) : null}
         </>

@@ -31,6 +31,7 @@ import { useTtsSession } from '../hooks/useTtsSession';
 import { useBackgroundTtsAdvance } from '../hooks/useBackgroundTtsAdvance';
 import type { TtsSettings } from '@modules/nitro-tts';
 import { ChapterInfo } from '@database/types';
+import type { TtsStatus } from './TtsDockedBar';
 import { Dialog } from '@components/Dialog';
 import { TextInput } from 'react-native-paper';
 import useCustomCode from './Hooks/useCustomCode';
@@ -55,6 +56,8 @@ type WebViewReaderProps = {
   onTouchStart?(): void;
   onSearchResult(result: ReaderSearchResult): void;
   searchTextRef: React.MutableRefObject<string>;
+  /** Only passed when the app draws the TTS controls (docked mode). */
+  onTtsStatusChange?(status: TtsStatus): void;
 };
 
 const onLogMessage = (payload: { nativeEvent: { data: string } }) => {
@@ -138,6 +141,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
   onTouchStart,
   onSearchResult,
   searchTextRef,
+  onTtsStatusChange,
 }) => {
   const {
     novel,
@@ -270,6 +274,10 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({
       `);
     }
   }, [backgroundTts, ttsProgress, webViewRef]);
+
+  useEffect(() => {
+    onTtsStatusChange?.({ state: ttsState, progress: ttsProgress });
+  }, [onTtsStatusChange, ttsProgress, ttsState]);
 
   // Keyed on the document: in continuous mode the active chapter changes while
   // TTS reads on into the next chapter of the same document.

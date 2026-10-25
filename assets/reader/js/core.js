@@ -391,6 +391,100 @@ window.tts = new (function () {
     });
   };
 
+  /** App chrome (app bar, bottom bar) covering the page while it is shown. */
+  this.chromeInsets = { top: 0, bottom: 0 };
+  this.setChromeInsets = insets => Object.assign(this.chromeInsets, insets);
+
+  /** The vertical part of the screen not covered by the app chrome. */
+  this.viewBand = () => {
+    const height = window.innerHeight;
+    return reader.hidden.val
+      ? { top: 0, bottom: height }
+      : {
+          top: this.chromeInsets.top,
+          bottom: height - this.chromeInsets.bottom,
+        };
+  };
+
+  /**
+   * Where a paragraph is relative to the band on the current screen (paged
+   * mode: the current page, fragments split across columns counted apart):
+   * 'start' when it starts in the band or is mostly in it, 'partly',
+   * 'above'/'below' when none of it is in the band, 'hidden' when not laid out.
+   */
+  this.placeInBand = (element, band) => {
+    const rects = [...element.getClientRects()].filter(r => r.height > 0);
+    if (!rects.length) return 'hidden';
+    const width = reader.layoutWidth;
+    const onPage = r => r.right > 0 && r.left < width;
+    let visible = 0;
+    let total = 0;
+    for (const r of rects) {
+      total += r.height;
+      if (onPage(r)) {
+        visible += Math.max(
+          0,
+          Math.min(r.bottom, band.bottom) - Math.max(r.top, band.top),
+        );
+      }
+    }
+    const first = rects[0];
+    if (!visible) {
+      return first.left >= width || first.top >= band.bottom
+        ? 'below'
+        : 'above';
+    }
+    const startsInBand =
+      onPage(first) && first.top >= band.top && first.top < band.bottom;
+    return startsInBand || visible >= total / 2 ? 'start' : 'partly';
+  };
+
+  /**
+   * Starts at the first paragraph in view: the first that starts there or is
+   * mostly visible, else one partly visible (longer than the screen), else
+   * the next one below, else the last one above, else the chapter start.
+   */
+  this.startFromVisible = () => {
+    const paged = reader.generalSettings.val.pageReader;
+    const band = this.viewBand();
+    const hasText = el => !!this.normalizeText(el.innerText);
+    const lastWithText = (elements, end) => {
+      for (let i = end - 1; i >= 0; i--) {
+        if (hasText(elements[i])) return elements[i];
+      }
+    };
+    let partly;
+    // Resolved only when needed: it walks back over paragraphs read already.
+    let above;
+    for (const container of reader.chapterContainers()) {
+      if (!paged && container.getBoundingClientRect().bottom <= band.top) {
+        above = () => {
+          const elements = this.getAllReadableElements(container);
+          return lastWithText(elements, elements.length);
+        };
+        continue;
+      }
+      const elements = this.getAllReadableElements(container);
+      for (let i = 0; i < elements.length; i++) {
+        const element = elements[i];
+        const place = this.placeInBand(element, band);
+        if (place === 'hidden') continue;
+        if (place === 'above') {
+          above = () => lastWithText(elements, i + 1);
+          continue;
+        }
+        if (!hasText(element)) continue;
+        if (place === 'partly') {
+          partly ??= element;
+          continue;
+        }
+        this.start(place === 'below' ? partly ?? element : element);
+        return;
+      }
+    }
+    this.start(partly ?? above?.());
+  };
+
   this.readableEntries = root =>
     this.getAllReadableElements(root)
       .map(readableElement => ({
@@ -618,16 +712,20 @@ window.tts = new (function () {
       );
       return;
     }
-    const windowHeight =
-      window.innerHeight || document.documentElement.clientHeight;
+    // While the app chrome is shown, the paragraph is kept clear of it.
+    const band = this.viewBand();
     const isPartiallyVisible =
-      rect.top < windowHeight &&
-      rect.bottom > 0 &&
+      rect.top < band.bottom &&
+      rect.bottom > band.top &&
       rect.left < window.innerWidth &&
       rect.right > 0;
 
     // Only scroll if element is not visible or barely visible
-    if (!isPartiallyVisible || rect.top < 0 || rect.bottom > windowHeight) {
+    if (
+      !isPartiallyVisible ||
+      rect.top < band.top ||
+      rect.bottom > band.bottom
+    ) {
       // Check scrollToTop setting (default to true for better reading experience)
       const scrollToTop = reader.readerSettings.val.tts?.scrollToTop !== false;
 
@@ -635,7 +733,8 @@ window.tts = new (function () {
         // Scroll to top with padding for notch/camera (80px from top)
         const elementTop =
           element.getBoundingClientRect().top + window.pageYOffset;
-        const offsetPosition = elementTop - 80; // 80px padding for notch/camera
+        // 80px padding for notch/camera, or below the app bar when shown.
+        const offsetPosition = elementTop - Math.max(80, band.top + 8);
 
         window.scrollTo({
           top: offsetPosition,

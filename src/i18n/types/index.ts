@@ -371,6 +371,9 @@ export interface StringMap {
   'generalSettingsScreen.disableLoadingAnimationsDesc': 'string';
   'generalSettingsScreen.disableHapticFeedback': 'string';
   'generalSettingsScreen.disableHapticFeedbackDescription': 'string';
+  'generalSettingsScreen.textToSpeech': 'string';
+  'generalSettingsScreen.ttsDockedControls': 'string';
+  'generalSettingsScreen.ttsDockedControlsDesc': 'string';
   'generalSettingsScreen.chapterDownloadCooldown': 'string';
   'generalSettingsScreen.chapterDownloadCooldownDesc': 'string';
   'generalSettingsScreen.chapterDownloadCooldownPlaceholder': 'string';
@@ -551,6 +554,11 @@ export interface StringMap {
   'novelScreen.tracking': 'string';
   'novelScreen.unknownStatus': 'string';
   'novelScreen.updatedToast': 'string';
+  'readerScreen.ttsControls.next': 'string';
+  'readerScreen.ttsControls.pause': 'string';
+  'readerScreen.ttsControls.play': 'string';
+  'readerScreen.ttsControls.previous': 'string';
+  'readerScreen.ttsControls.stop': 'string';
   'readerScreen.bottomSheet.alignCenter': 'string';
   'readerScreen.bottomSheet.alignJustify': 'string';
   'readerScreen.bottomSheet.alignLeft': 'string';
