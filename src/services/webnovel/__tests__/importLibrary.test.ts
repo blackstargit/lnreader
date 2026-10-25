@@ -21,6 +21,9 @@ jest.mock('@database/queries/ChapterQueries', () => ({}));
 jest.mock('@database/queries/HistoryQueries', () => ({}));
 jest.mock('@plugins/pluginManager', () => ({ getPlugin: jest.fn(() => ({})) }));
 jest.mock('@services/plugin/fetch', () => ({ fetchNovel: jest.fn() }));
+jest.mock('@services/updates/LibraryUpdateQueries', () => ({
+  updateNovelStats: jest.fn(),
+}));
 jest.mock('@hooks/persisted/useNovel/store-helper/contracts', () => ({
   novelPersistence: {},
 }));

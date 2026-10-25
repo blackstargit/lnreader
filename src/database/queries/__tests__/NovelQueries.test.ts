@@ -147,6 +147,24 @@ describe('NovelQueries', () => {
       // Second insert should return undefined due to conflict
       expect(novelId2).toBeUndefined();
     });
+
+    it('should persist plugin stats', async () => {
+      const info = [{ label: 'Views', value: '82.2M' }];
+      const novelId = await insertNovelAndChapters('test-plugin', {
+        id: undefined,
+        path: '/test/stats',
+        name: 'Stats Novel',
+        chapters: [],
+        rating: 4.89,
+        ratingCount: 5272,
+        info,
+      });
+
+      const novel = getNovelById(novelId!);
+      expect(novel?.rating).toBe(4.89);
+      expect(novel?.ratingCount).toBe(5272);
+      expect(JSON.parse(novel!.info!)).toEqual(info);
+    });
   });
 
   describe('switchNovelToLibraryQuery', () => {
@@ -562,6 +580,34 @@ describe('NovelQueries', () => {
           restoredChapterId: restoredChapters[0].id,
         },
       ]);
+    });
+
+    it('keeps local stats when the backup has none', async () => {
+      const novelId = await insertTestNovel(getTestDb(), {
+        path: '/stats/novel',
+        pluginId: 'p',
+        rating: 4.5,
+        ratingCount: 7,
+        info: '[]',
+      });
+
+      await _restoreNovelAndChapters({
+        id: 99,
+        path: '/stats/novel',
+        pluginId: 'p',
+        name: 'Stats Novel',
+        rating: null,
+        ratingCount: null,
+        info: null,
+        chapters: [],
+      });
+
+      expect(getNovelById(novelId)).toMatchObject({
+        name: 'Stats Novel',
+        rating: 4.5,
+        ratingCount: 7,
+        info: '[]',
+      });
     });
   });
 

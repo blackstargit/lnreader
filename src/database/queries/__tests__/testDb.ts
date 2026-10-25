@@ -67,7 +67,10 @@ const MIGRATION_STATEMENTS = [
 	totalChapters integer DEFAULT 0,
 	lastReadAt text,
 	lastUpdatedAt text,
-	notes text
+	notes text,
+	rating real,
+	ratingCount integer,
+	info text
 )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS novel_path_plugin_unique ON Novel (path, pluginId)`,
   `CREATE INDEX IF NOT EXISTS NovelIndex ON Novel (pluginId, path, id, inLibrary)`,

@@ -22,6 +22,7 @@ import type {
   WebnovelLibraryEntry,
 } from '@services/backgroundTasks/contracts';
 import { fetchNovel } from '@services/plugin/fetch';
+import { updateNovelStats } from '@services/updates/LibraryUpdateQueries';
 import { sleep } from '@utils/sleep';
 
 export const WEBNOVEL_PLUGIN_ID = 'webnovel';
@@ -154,6 +155,7 @@ const importBook = async (
   let novelId = cached?.id;
   if (novelId) {
     await insertChapters(novelId, source.chapters);
+    await updateNovelStats(novelId, source);
   } else {
     novelId = await insertNovelAndChapters(WEBNOVEL_PLUGIN_ID, {
       ...source,

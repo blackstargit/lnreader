@@ -1,6 +1,7 @@
 import {
   index,
   integer,
+  real,
   sqliteTable,
   text,
   uniqueIndex,
@@ -28,6 +29,9 @@ export const novel = sqliteTable(
     lastReadAt: text('lastReadAt'),
     lastUpdatedAt: text('lastUpdatedAt'),
     notes: text('notes'),
+    rating: real('rating'),
+    ratingCount: integer('ratingCount'),
+    info: text('info'),
   },
   table => [
     uniqueIndex('novel_path_plugin_unique').on(table.path, table.pluginId),

@@ -20,6 +20,7 @@ import { Row } from '@components/Common';
 import ReadButton from './ReadButton';
 import NovelSummary from '../NovelSummary/NovelSummary';
 import NovelNotes from '../NovelNotes/NovelNotes';
+import NovelStats from './NovelStats';
 import NovelScreenButtonGroup from '../NovelScreenButtonGroup/NovelScreenButtonGroup';
 import { getString } from '@i18n/translations';
 import { filterColor } from '@theme/colors';
@@ -265,6 +266,14 @@ const NovelInfoHeader = ({
             theme={theme}
           />
         )}
+        {novel.id !== 'NO_ID' ? (
+          <NovelStats
+            theme={theme}
+            rating={novel.rating}
+            ratingCount={novel.ratingCount}
+            info={novel.info}
+          />
+        ) : null}
         {isLoading && (!novel.genres || !novel.summary) ? (
           <NovelMetaSkeleton />
         ) : (

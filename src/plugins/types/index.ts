@@ -82,6 +82,16 @@ export interface SourceNovel extends NovelItem {
   status?: NovelStatus;
   chapters: ChapterItem[];
   totalPages?: number;
+  /** 0–5 */
+  rating?: number;
+  ratingCount?: number;
+  /** Display-ready label/value stats, in display order. */
+  info?: NovelInfoItem[];
+}
+
+export interface NovelInfoItem {
+  label: string;
+  value: string;
 }
 
 export interface SourcePage {

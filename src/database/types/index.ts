@@ -15,6 +15,10 @@ export interface NovelInfo {
   isLocal?: boolean | null;
   totalPages?: number | null;
   notes?: string | null;
+  rating?: number | null;
+  ratingCount?: number | null;
+  /** JSON array of `NovelInfoItem`; parse with `parseNovelInfoItems`. */
+  info?: string | null;
 }
 
 export interface DBNovelInfo extends NovelInfo {

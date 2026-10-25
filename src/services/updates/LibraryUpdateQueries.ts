@@ -9,6 +9,7 @@ import { novelSchema, chapterSchema } from '@database/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import NativeFile from '@modules/native-file';
 import { insertChapters } from '@database/queries/ChapterQueries';
+import { getNovelStatsValues } from '@database/utils/novelStats';
 
 /**
  * Update novel metadata in the database including cover image.
@@ -54,6 +55,7 @@ const updateNovelMetadata = async (
         genres: genres || null,
         status: status || null,
         totalPages: totalPages || 0,
+        ...getNovelStatsValues(novel),
       })
       .where(eq(novelSchema.id, novelId))
       .run();
@@ -61,13 +63,21 @@ const updateNovelMetadata = async (
 };
 
 /**
- * Update only the total pages count for a novel.
+ * Update the fields that change on every refresh even when metadata refresh
+ * is off: total pages and plugin stats (only those the plugin provided).
  */
-const updateNovelTotalPages = async (novelId: number, totalPages: number) => {
+export const updateNovelStats = async (novelId: number, novel: SourceNovel) => {
+  const values = {
+    ...(novel.totalPages ? { totalPages: novel.totalPages } : {}),
+    ...getNovelStatsValues(novel),
+  };
+  if (!Object.keys(values).length) {
+    return;
+  }
   await dbManager.write(async tx => {
     await tx
       .update(novelSchema)
-      .set({ totalPages })
+      .set(values)
       .where(eq(novelSchema.id, novelId))
       .run();
   });
@@ -194,8 +204,8 @@ const updateNovel = async (
 
   if (refreshNovelMetadata) {
     await updateNovelMetadata(pluginId, novelId, novel);
-  } else if (novel.totalPages) {
-    await updateNovelTotalPages(novelId, novel.totalPages);
+  } else {
+    await updateNovelStats(novelId, novel);
   }
   await updateNovelChapters(
     pluginId,

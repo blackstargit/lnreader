@@ -27,6 +27,7 @@ import type { TransactionParameter } from '@database/manager/manager.d';
 import { getLibraryDefaultCategoryId } from '@hooks/persisted/useSettings';
 import NativeFile from '@modules/native-file';
 import { BUILT_IN_CATEGORY_IDS } from '@database/constants';
+import { getNovelStatsValues } from '@database/utils/novelStats';
 
 const getBuiltInDefaultCategory = async (tx: TransactionParameter) => {
   const defaultCategory = await tx
@@ -100,6 +101,7 @@ export const insertNovelAndChapters = async (
         status: sourceNovel.status || null,
         genres: sourceNovel.genres || null,
         totalPages: sourceNovel.totalPages || 0,
+        ...getNovelStatsValues(sourceNovel),
       })
       .onConflictDoNothing()
       .returning()
@@ -541,6 +543,9 @@ export const _restoreNovelAndChapters = async (
           ...novel,
           // A backup without a note must not wipe a local one.
           notes: sql`coalesce(excluded.notes, ${novelSchema.notes})`,
+          rating: sql`coalesce(excluded.rating, ${novelSchema.rating})`,
+          ratingCount: sql`coalesce(excluded.ratingCount, ${novelSchema.ratingCount})`,
+          info: sql`coalesce(excluded.info, ${novelSchema.info})`,
           totalChapters: 0,
           chaptersDownloaded: 0,
           chaptersUnread: 0,
