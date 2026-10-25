@@ -91,6 +91,16 @@ export const migrateNovel = async (
   }
 
   await dbManager.write(async tx => {
+    // Read the source note fresh: the task payload is stale after a re-run.
+    const sourceNotes =
+      (
+        await tx
+          .select({ notes: novelSchema.notes })
+          .from(novelSchema)
+          .where(eq(novelSchema.id, fromNovel.id))
+          .get()
+      )?.notes ?? null;
+    const targetNotes = toNovel!.notes ?? null;
     await tx
       .update(novelSchema)
       .set({
@@ -124,6 +134,11 @@ export const migrateNovel = async (
           toNovel!.genres,
           options.metadata,
         ),
+        // Keep the target's note; append the source's after a blank line.
+        notes:
+          sourceNotes && !targetNotes?.includes(sourceNotes)
+            ? [targetNotes, sourceNotes].filter(Boolean).join('\n\n')
+            : targetNotes,
         inLibrary: true,
       })
       .where(eq(novelSchema.id, toNovel!.id));

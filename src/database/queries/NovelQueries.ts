@@ -300,17 +300,19 @@ export const removeNovelsFromLibrary = async (novelIds: number[]) => {
   showToast(getString('browseScreen.removeFromLibrary'));
 };
 
+// Cached = not in library and no user note (noted novels are kept).
+const cachedCondition = and(
+  eq(novelSchema.inLibrary, false),
+  sql`coalesce(${novelSchema.notes}, '') = ''`,
+);
+
 export const getCachedNovels = async (): Promise<NovelInfo[]> => {
-  return dbManager
-    .select()
-    .from(novelSchema)
-    .where(eq(novelSchema.inLibrary, false))
-    .all();
+  return dbManager.select().from(novelSchema).where(cachedCondition).all();
 };
 
 export const deleteCachedNovels = async () => {
   await dbManager.write(async tx => {
-    await tx.delete(novelSchema).where(eq(novelSchema.inLibrary, false)).run();
+    await tx.delete(novelSchema).where(cachedCondition).run();
   });
   showToast(getString('advancedSettingsScreen.cachedNovelsDeletedToast'));
 };
@@ -376,6 +378,19 @@ export const restoreLibrary = async (novel: NovelInfo) => {
   if (novelId && sourceNovel.chapters) {
     await insertChapters(novelId, sourceNovel.chapters);
   }
+};
+
+export const updateNovelNotes = async (
+  novelId: number,
+  notes: string | null,
+) => {
+  await dbManager.write(async tx => {
+    await tx
+      .update(novelSchema)
+      .set({ notes: notes?.trim() || null })
+      .where(eq(novelSchema.id, novelId))
+      .run();
+  });
 };
 
 export const updateNovelInfo = async (info: NovelInfo) => {
@@ -524,6 +539,8 @@ export const _restoreNovelAndChapters = async (
         target: [novelSchema.path, novelSchema.pluginId],
         set: {
           ...novel,
+          // A backup without a note must not wipe a local one.
+          notes: sql`coalesce(excluded.notes, ${novelSchema.notes})`,
           totalChapters: 0,
           chaptersDownloaded: 0,
           chaptersUnread: 0,

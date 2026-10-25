@@ -538,6 +538,12 @@ export interface StringMap {
   'novelScreen.noSummary': 'string';
   'novelScreen.noCoverFound': 'string';
   'novelScreen.notFound': 'string';
+  'novelScreen.notes.add': 'string';
+  'novelScreen.notes.delete': 'string';
+  'novelScreen.notes.deleteConfirm': 'string';
+  'novelScreen.notes.edit': 'string';
+  'novelScreen.notes.placeholder': 'string';
+  'novelScreen.notes.title': 'string';
   'novelScreen.progress': 'string';
   'novelScreen.readChaptersDeleted': 'string';
   'novelScreen.startReadingChapters': 'string';

@@ -19,6 +19,7 @@ import {
 import { Row } from '@components/Common';
 import ReadButton from './ReadButton';
 import NovelSummary from '../NovelSummary/NovelSummary';
+import NovelNotes from '../NovelNotes/NovelNotes';
 import NovelScreenButtonGroup from '../NovelScreenButtonGroup/NovelScreenButtonGroup';
 import { getString } from '@i18n/translations';
 import { filterColor } from '@theme/colors';
@@ -278,6 +279,9 @@ const NovelInfoHeader = ({
             ) : null}
           </>
         )}
+        {novel.id !== 'NO_ID' ? (
+          <NovelNotes novel={novel} theme={theme} />
+        ) : null}
         <ReadButton
           navigateToChapter={navigateToChapter}
           firstUnreadChapter={firstUnreadChapter}

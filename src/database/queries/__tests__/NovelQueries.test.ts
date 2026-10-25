@@ -30,6 +30,7 @@ import {
   removeNovelsFromLibrary,
   getCachedNovels,
   deleteCachedNovels,
+  updateNovelNotes,
   restoreLibrary,
   updateNovelInfo,
   pickCustomNovelCover,
@@ -418,6 +419,43 @@ describe('NovelQueries', () => {
       expect(cached).toHaveLength(0);
       const all = await getAllNovels();
       expect(all.length).toBe(1); // Only library novel remains
+    });
+  });
+
+  describe('deleteCachedNovels with notes', () => {
+    it('keeps cached novels that have a note', async () => {
+      const keep = await insertTestNovel(getTestDb(), { notes: 'remember' });
+      await insertTestNovel(getTestDb(), { notes: '' });
+      await insertTestNovel(getTestDb(), {});
+
+      await deleteCachedNovels();
+
+      const all = await getAllNovels();
+      expect(all.map(n => n.id)).toEqual([keep]);
+    });
+  });
+
+  describe('updateNovelNotes', () => {
+    it('sets, trims and clears the note', async () => {
+      const id = await insertTestNovel(getTestDb(), { inLibrary: true });
+
+      await updateNovelNotes(id, '  hello  ');
+      expect((await getAllNovels())[0].notes).toBe('hello');
+
+      await updateNovelNotes(id, '   ');
+      expect((await getAllNovels())[0].notes).toBeNull();
+    });
+
+    it('survives updateNovelInfo', async () => {
+      const id = await insertTestNovel(getTestDb(), { notes: 'keep me' });
+      const [novel] = await getAllNovels();
+
+      await updateNovelInfo({ ...novel, name: 'Renamed', notes: undefined });
+
+      const [after] = await getAllNovels();
+      expect(after.id).toBe(id);
+      expect(after.name).toBe('Renamed');
+      expect(after.notes).toBe('keep me');
     });
   });
 

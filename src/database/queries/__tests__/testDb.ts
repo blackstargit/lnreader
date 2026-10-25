@@ -66,7 +66,8 @@ const MIGRATION_STATEMENTS = [
 	chaptersUnread integer DEFAULT 0,
 	totalChapters integer DEFAULT 0,
 	lastReadAt text,
-	lastUpdatedAt text
+	lastUpdatedAt text,
+	notes text
 )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS novel_path_plugin_unique ON Novel (path, pluginId)`,
   `CREATE INDEX IF NOT EXISTS NovelIndex ON Novel (pluginId, path, id, inLibrary)`,
@@ -90,7 +91,7 @@ const MIGRATION_STATEMENTS = [
  */
 export function createTestDb() {
   // Create in-memory database
-  const sqlite = open({ name: ':memory:' });
+  const sqlite = open({ name: ':memory:', location: ':memory:' });
   // drizzle-orm/op-sqlite expects executeAsync on the client
   (sqlite as any).executeAsync ??= sqlite.execute;
   (sqlite as any).executeRawAsync ??= sqlite.executeRaw;
