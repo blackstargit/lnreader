@@ -32,3 +32,4 @@ onlyBuiltDependencies:
 
 patchedDependencies:
   '@legendapp/list@3.3.3': patches/@legendapp__list@3.3.3.patch
+  react-native-reanimated@4.5.2: patches/react-native-reanimated@4.5.2.patch

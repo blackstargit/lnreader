@@ -1,0 +1,109 @@
+diff --git a/android/src/main/java/com/swmansion/reanimated/NativeProxy.kt b/android/src/main/java/com/swmansion/reanimated/NativeProxy.kt
+index 48e37714232d5ccf74d99d61cb2fac56314087aa..50ab37b592801fae250cd01a485a5f918ada0589 100644
+--- a/android/src/main/java/com/swmansion/reanimated/NativeProxy.kt
++++ b/android/src/main/java/com/swmansion/reanimated/NativeProxy.kt
+@@ -245,6 +245,10 @@ open class NativeProxy {
+             }.apply { isAccessible = true }
+     }
+ 
++    private val getViewExistsMethod by lazy {
++        runCatching { mountingManager.javaClass.getMethod("getViewExists", Int::class.javaPrimitiveType) }.getOrNull()
++    }
++
+     @DoNotStrip
+     fun synchronouslyUpdateUIProps(
+         intBuffer: IntArray,
+@@ -253,9 +257,14 @@ open class NativeProxy {
+         SynchronousPropsBufferParser.parse(intBuffer, doubleBuffer) { viewTag, props ->
+             if (BuildConfig.IS_REACT_NATIVE_86_OR_NEWER) {
+                 try {
++                    // Backport of upstream #10435 (4.7.1): skip views that are already unmounted.
++                    // The props stay in the registry, and the commit hook applies them to the shadow tree.
++                    if (getViewExistsMethod?.invoke(mountingManager, viewTag) == false) {
++                        return@parse
++                    }
+                     updatePropsSynchronouslyMethod.invoke(mountingManager, viewTag, props)
+                 } catch (e: Exception) {
+-                    Log.w("Reanimated", "synchronouslyUpdateUIProps failed for tag $viewTag", e)
++                    Log.w("Reanimated", "synchronouslyUpdateUIProps failed for tag $viewTag: ${e.cause ?: e}")
+                 }
+             } else {
+                 mFabricUIManager.synchronouslyUpdateViewOnUIThread(viewTag, props)
+diff --git a/lib/module/PropsRegistryGarbageCollector.js b/lib/module/PropsRegistryGarbageCollector.js
+index 462351cca2fdde6223058cb368ba99447eb370c4..108489b7a32f2e7b0ebbe3f2dc269a178d032a26 100644
+--- a/lib/module/PropsRegistryGarbageCollector.js
++++ b/lib/module/PropsRegistryGarbageCollector.js
+@@ -4,7 +4,6 @@ import { unprocessColor, unprocessColorsInProps } from "./common/style/processor
+ import { ReanimatedModule } from './ReanimatedModule';
+ const FLUSH_INTERVAL_MS = 500;
+ export const PropsRegistryGarbageCollector = {
+-  viewsCount: 0,
+   viewsMap: new Map(),
+   intervalId: null,
+   registerView(viewTag, component) {
+@@ -17,15 +16,15 @@ export const PropsRegistryGarbageCollector = {
+       return;
+     }
+     this.viewsMap.set(viewTag, component);
+-    this.viewsCount++;
+-    if (this.viewsCount === 1) {
++    if (this.viewsMap.size === 1) {
+       this.registerInterval();
+     }
+   },
+   unregisterView(viewTag) {
+-    this.viewsMap.delete(viewTag);
+-    this.viewsCount--;
+-    if (this.viewsCount === 0) {
++    // Nested animated components share a viewTag but register once, so count
++    // by the map: a plain counter drifts below zero and stops the GC for good.
++    const deleted = this.viewsMap.delete(viewTag);
++    if (deleted && this.viewsMap.size === 0) {
+       this.unregisterInterval();
+     }
+   },
+diff --git a/lib/typescript/PropsRegistryGarbageCollector.d.ts b/lib/typescript/PropsRegistryGarbageCollector.d.ts
+index 0e4218b4aa66fe088af69b5c7365b74d740066e0..ad4c1df86c4071d297dd5710855f936fb978f50f 100644
+--- a/lib/typescript/PropsRegistryGarbageCollector.d.ts
++++ b/lib/typescript/PropsRegistryGarbageCollector.d.ts
+@@ -1,6 +1,5 @@
+ import type { IAnimatedComponentInternal } from './createAnimatedComponent/commonTypes';
+ export declare const PropsRegistryGarbageCollector: {
+-    viewsCount: number;
+     viewsMap: Map<number, IAnimatedComponentInternal>;
+     intervalId: NodeJS.Timeout | null;
+     registerView(viewTag: number, component: IAnimatedComponentInternal): void;
+diff --git a/src/PropsRegistryGarbageCollector.ts b/src/PropsRegistryGarbageCollector.ts
+index f917ce5a8586c02855f1d8d9ae73154592d22510..554a8908388fa59ca6a157415f93c41a7ff43364 100644
+--- a/src/PropsRegistryGarbageCollector.ts
++++ b/src/PropsRegistryGarbageCollector.ts
+@@ -11,7 +11,6 @@ import { ReanimatedModule } from './ReanimatedModule';
+ const FLUSH_INTERVAL_MS = 500;
+ 
+ export const PropsRegistryGarbageCollector = {
+-  viewsCount: 0,
+   viewsMap: new Map<number, IAnimatedComponentInternal>(),
+   intervalId: null as NodeJS.Timeout | null,
+ 
+@@ -25,16 +24,16 @@ export const PropsRegistryGarbageCollector = {
+       return;
+     }
+     this.viewsMap.set(viewTag, component);
+-    this.viewsCount++;
+-    if (this.viewsCount === 1) {
++    if (this.viewsMap.size === 1) {
+       this.registerInterval();
+     }
+   },
+ 
+   unregisterView(viewTag: number) {
+-    this.viewsMap.delete(viewTag);
+-    this.viewsCount--;
+-    if (this.viewsCount === 0) {
++    // Nested animated components share a viewTag but register once, so count
++    // by the map: a plain counter drifts below zero and stops the GC for good.
++    const deleted = this.viewsMap.delete(viewTag);
++    if (deleted && this.viewsMap.size === 0) {
+       this.unregisterInterval();
+     }
+   },
